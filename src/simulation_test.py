@@ -33,8 +33,8 @@ simulation_time_limit = 100 #seconds
 accept_dist = 0.2 #acceptable destination distance
 accept_stop_v = 0.05 #acceptable stopping velocity
 
-desired_speed = 5           # m/s
-max_speed = 15              # m/s
+desired_speed = 3           # m/s
+max_speed = 10              # m/s
 max_reverse_speed = 5       # m/s
 max_steer_angle = np.pi / 4     #max steering angle
 max_steer_rate = np.pi / 6      #max steering speed
@@ -47,12 +47,12 @@ W4 = W2  # state error weightage
 
 #potential field
 start_x1 = 0.0  # start x position [m]
-start_y1 = -5.0  # start y positon [m]
+start_y1 = -5.0  # start y position [m]
 goal_x1 = 50.0  # goal x position [m]
 goal_y1 = 30.0  # goal y position [m]
 
 start_x2 = 10.0  # start x position [m]
-start_y2 = 5.0  # start y positon [m]
+start_y2 = 5.0  # start y position [m]
 goal_x2 = 60.0  # goal x position [m]
 goal_y2 = 40.0  # goal y position [m]
 
@@ -146,53 +146,8 @@ def calc_predicted_trajectory(acc,steer,cur_state_vec):
         traj_pred[:,i+1] = temp_state.T
     return traj_pred
 
-################################################################################################### run_MPC_solo
-def run_MPC_solo(traj_des, cur_state_vec, mpc_acc, mpc_steer, steer_des, goal):
-
-    for iter in range(3):
-        traj_pred = calc_predicted_trajectory(mpc_acc,mpc_steer,cur_state_vec)
-        x = cp.Variable([Nx, H+1])
-        u = cp.Variable([Nu, H])
-
-        cost = 0.0
-        constraints = []
-        for i in range(H):
-            cost += cp.sum(W1 * cp.square(u[:, i]))                                   # input weightage
-            cost += cp.sum(W2 * cp.square(traj_des[:, i] - x[:, i]))                  # state error weightage
-            #cost += cp.sum(W2 * cp.square([goal[0],goal[1],0,0] - x[:, i]))                  # terminal cost
-            if i < (H - 1):
-                cost += cp.sum(W3 * cp.square(u[:, i+1] - u[:, i]))                    # rate of input change weightage
-                constraints += [cp.abs(u[1, i+1] - u[1, i]) <= max_steer_rate * dt]
-
-            A,B,C = dynamic_model(traj_pred[3,i], traj_pred[2,i], mpc_steer[i])
-            constraints += [x[:, i+1] == A * x[:, i] + B * u[:, i] + C]
-
-
-        cost += cp.sum(W4 * cp.square(traj_des[:, H] - x[:, H]))                      # final state error weightage
-        #cost += cp.sum(10 * cp.square([goal[0],goal[1]] - x[:2, H]))                  # terminal cost
-
-        constraints += [x[:, 0] == cur_state_vec]
-        constraints += [x[3, :] <= max_speed]
-        constraints += [x[3, :] >= -max_reverse_speed]
-        constraints += [u[1, :] <= max_steer_angle]
-        constraints += [u[1, :] >= -max_steer_angle]
-        constraints += [u[0, :] <= max_acc]
-        constraints += [u[0, :] >= -3*max_acc]
-
-        prob = cp.Problem(cp.Minimize(cost), constraints)
-        prob.solve()
-
-        mpc_x = x.value[0, :]
-        mpc_y = x.value[1, :]
-        mpc_yaw = x.value[2, :]
-        mpc_v = x.value[3, :]
-        mpc_acc = u.value[0, :]
-        mpc_steer = u.value[1, :]
-
-    return mpc_x, mpc_y, mpc_yaw, mpc_v, mpc_acc, mpc_steer
-
-################################################################################################### run_MPC_duo
-def run_MPC_duo(traj_des, cur_state_vec, mpc_acc, mpc_steer, steer_des, goal):
+################################################################################################### run_MPC
+def run_MPC(traj_des, cur_state_vec, mpc_acc, mpc_steer, steer_des, goal):
 
     for iter in range(3):
         traj_pred = calc_predicted_trajectory(mpc_acc,mpc_steer,cur_state_vec)
@@ -334,11 +289,8 @@ def run_controller(path_x1, path_x2, path_y1, path_y2, path_yaw1, path_yaw2, goa
         traj_des1, target_pt1, steer_des1 = cal_desired_trajectory(cur_state_vec1, path_x1, path_y1, path_yaw1, target_pt1)
         traj_des2, target_pt2, steer_des2 = cal_desired_trajectory(cur_state_vec2, path_x2, path_y2, path_yaw2, target_pt2)
 
-        # mpc_x1, mpc_x2, mpc_y1, mpc_y2, mpc_yaw1, mpc_yaw2, mpc_v1, mpc_v2, mpc_acc1, mpc_acc2, mpc_steer1, mpc_steer2 \
-                # = run_MPC_duo(traj_des1, traj_des2, cur_state_vec1, cur_state_vec2, mpc_acc1, mpc_acc2, mpc_steer1, mpc_steer2, steer_des1, steer_des2, goal1, goal2)
-
-        mpc_x1, mpc_y1, mpc_yaw1, mpc_v1, mpc_acc1, mpc_steer1 = run_MPC_solo(traj_des1, cur_state_vec1, mpc_acc1, mpc_steer1, steer_des1, goal1)
-        mpc_x2, mpc_y2, mpc_yaw2, mpc_v2, mpc_acc2, mpc_steer2 = run_MPC_solo(traj_des2, cur_state_vec2, mpc_acc2, mpc_steer2, steer_des2, goal2)
+        mpc_x1, mpc_y1, mpc_yaw1, mpc_v1, mpc_acc1, mpc_steer1 = run_MPC(traj_des1, cur_state_vec1, mpc_acc1, mpc_steer1, steer_des1, goal1)
+        mpc_x2, mpc_y2, mpc_yaw2, mpc_v2, mpc_acc2, mpc_steer2 = run_MPC(traj_des2, cur_state_vec2, mpc_acc2, mpc_steer2, steer_des2, goal2)
 
         current_state1.update_state(mpc_acc1[0], mpc_steer1[0])
         current_state2.update_state(mpc_acc2[0], mpc_steer2[0])
@@ -388,8 +340,8 @@ def run_controller(path_x1, path_x2, path_y1, path_y2, path_yaw1, path_yaw2, goa
 
         if path_planning:
             # path_x1, path_x2, path_y1, path_y2, path_yaw1, path_yaw2, obstacle_state = potential_field_path(test_state1, test_state2, obstacle_state)
-            path_x1, path_y1, path_yaw1, obstacle_state = potential_field_path(test_state1, obstacle_state)
-            path_x2, path_y2, path_yaw2, obstacle_state = potential_field_path(test_state2, obstacle_state)
+            path_x1, path_y1, path_yaw1, obstacle_state = potential_field_path(test_state1, goal1, obstacle_state)
+            path_x2, path_y2, path_yaw2, obstacle_state = potential_field_path(test_state2, goal2, obstacle_state)
             if stop_planning(path_x1, path_y1, goal_x1, goal_y1) and stop_planning(path_x2, path_y2, goal_x2, goal_y2):
                 path_planning = False
 
@@ -467,48 +419,38 @@ def get_spline_path(ax,ay,dl):
     cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(ax, ay, dl)
     return cx, cy, cyaw
 
-# def potential_field_path(s1, s2, obstacle_state):
-def potential_field_path(s1, obstacle_state):
+def potential_field_path(position, goal, obstacle_state):
     iter = 0
-    path_x1 = np.array([])
-    path_y1 = np.array([])
-    # path_x2 = np.array([])
-    # path_y2 = np.array([])
-    # pathYaw=np.array([])
+    path_x = np.array([])
+    path_y = np.array([])
 
     while iter <= H+5:
-         [step_x1, step_y1] = potential_field_planning(s1[0], s1[1], goal_x1, goal_y1, obstacle_state[0], obstacle_state[1])
-         # [step_x2, step_y2] = potential_field_planning(s2[0], s2[1], goal_x2, goal_y2, obstacle_state[0], obstacle_state[1])
+         [step_x, step_y] = potential_field_planning(position[0], position[1], goal[0], goal[1], obstacle_state[0], obstacle_state[1])
 
-         s1[0] = s1[0] + step_x1
-         s1[1] = s1[1] + step_y1
-
-         # s2[0] = s2[0] + step_x2
-         # s2[1] = s2[1] + step_y2
+         position[0] = position[0] + step_x
+         position[1] = position[1] + step_y
 
          obstacle_state[0] = np.add(obstacle_state[0], obstacle_state[2])
          obstacle_state[1] = np.add(obstacle_state[1], obstacle_state[3])
 
-         path_x1 = np.append(path_x1, s1[0])
-         path_y1 = np.append(path_y1, s1[1])
+         path_x = np.append(path_x, position[0])
+         path_y = np.append(path_y, position[1])
 
-         # path_x2 = np.append(path_x2, s2[0])
-         # path_y2 = np.append(path_y2, s2[1])
-         # pathYaw=np.append(pathYaw, math.atan2(cy, -cx))
          iter += 1
 
-    path_x1, path_y1, path_yaw1 = get_spline_path(path_x1, path_y1, 1)
-    # path_x2, path_y2, path_yaw2 = get_spline_path(path_x2, path_y2, 1)
-
-    # return path_x1, path_x2, path_y1, path_y2, path_yaw1, path_yaw2, obstacle_state
-    return path_x1, path_y1, path_yaw1, obstacle_state
+    path_x, path_y, path_yaw = get_spline_path(path_x, path_y, 1)
+    return path_x, path_y, path_yaw, obstacle_state
 
 def initialize_obstacles(NUM_OF_OBSTACLES):
     if get_obstacle:
-        ox = [10, 12, 15, 17, 20, 25, 27]
-        oy = [30, 20, 10, 15, 25, 30, 17]
-        velX = [0.05, 0.05, 0, 0, -0.05, -0.05, 0]
-        velY = [0, 0, -0.05, 0.05, 0, 0.05, -0.05]
+        # ox = [10, 12, 15, 17, 20, 25, 27]
+        # oy = [30, 20, 10, 15, 25, 30, 17]
+        # velX = [0.05, 0.05, 0, 0, -0.05, -0.05, 0]
+        # velY = [0, 0, -0.05, 0.05, 0, 0.05, -0.05]
+        ox = [0]
+        oy = [0]
+        velX = [0.05]
+        velY = [0.05]
     else:
         ox = []
         oy = []
@@ -534,8 +476,8 @@ def main():
     initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
 
     # path_x1, path_x2, path_y1, path_y2, path_yaw1, path_yaw2, obstacle_state = potential_field_path(start_robot1, start_robot2, initial_obstacle_state)
-    path_x1, path_y1, path_yaw1, obstacle_state = potential_field_path(start_robot1, initial_obstacle_state)
-    path_x2, path_y2, path_yaw2, obstacle_state = potential_field_path(start_robot2, initial_obstacle_state)
+    path_x1, path_y1, path_yaw1, obstacle_state = potential_field_path(start_robot1, goal_robot1, initial_obstacle_state)
+    path_x2, path_y2, path_yaw2, obstacle_state = potential_field_path(start_robot2, goal_robot2, initial_obstacle_state)
 
     # path_robot1 = np.array([path_x1, path_y1, path_yaw1])  #dimention = 2
     # path_robot2 = np.array([path_x2, path_y2, path_yaw2])  #dimention = 2
