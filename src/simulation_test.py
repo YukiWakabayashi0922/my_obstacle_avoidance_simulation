@@ -60,6 +60,21 @@ grid_size = 0.2  # potential grid size [m]
 robot_radius = 5.0  # robot radius [m]
 NUM_OF_OBSTACLES = 12
 
+class initial_robot:
+    def __init__(self, start_x, start_y, goal_x, goal_y):
+        self.start_x = start_x
+        self.start_y = start_y
+        self.goal_x = goal_x
+        self.goal_y = goal_y
+
+    def start:
+        start_robot = np.array([self.start_x, self.start_y])
+        return start_robot
+
+    def goal:
+        goal_robot = np.array([self.goal_x, self.goal_y])
+        return goal_robot
+
 ################################################################################################### Class state
 class State:
     def __init__(self,x_state,y_state,yaw,velocity):
@@ -79,6 +94,9 @@ class State:
         state_vec = np.array([self.x, self.y, self.yaw, self.v])
         return state_vec
     #end
+
+class Path:
+    def __init__(self, )
 
 ################################################################################################### ########################### plot_car
 # Vehicle parameters
@@ -468,6 +486,8 @@ def initialize_obstacles(NUM_OF_OBSTACLES):
 
 ################################################################################################### main
 def main():
+    robot1 = initial_robot()
+
     start_robot1 = np.array([start_x1, start_y1])  #dimention = 1
     start_robot2 = np.array([start_x2, start_y2])  #dimention = 1
     goal_robot1 = np.array([goal_x1, goal_y1])     #dimention = 1
