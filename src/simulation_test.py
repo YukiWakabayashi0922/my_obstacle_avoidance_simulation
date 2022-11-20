@@ -67,11 +67,11 @@ class initial_robot:
         self.goal_x = goal_x
         self.goal_y = goal_y
 
-    def start:
+    def start(self, start_x, start_y):
         start_robot = np.array([self.start_x, self.start_y])
         return start_robot
 
-    def goal:
+    def goal(self, goal_x, goal_y):
         goal_robot = np.array([self.goal_x, self.goal_y])
         return goal_robot
 
@@ -95,8 +95,8 @@ class State:
         return state_vec
     #end
 
-class Path:
-    def __init__(self, )
+# class Path:
+    # def __init__(self, )
 
 ################################################################################################### ########################### plot_car
 # Vehicle parameters
@@ -486,12 +486,13 @@ def initialize_obstacles(NUM_OF_OBSTACLES):
 
 ################################################################################################### main
 def main():
-    robot1 = initial_robot()
+    robot1 = initial_robot(start_x1, start_y1, goal_x1, goal_y1)
+    robot2 = initial_robot(start_x2, start_y2, goal_x2, goal_y2)
 
-    start_robot1 = np.array([start_x1, start_y1])  #dimention = 1
-    start_robot2 = np.array([start_x2, start_y2])  #dimention = 1
-    goal_robot1 = np.array([goal_x1, goal_y1])     #dimention = 1
-    goal_robot2 = np.array([goal_x2, goal_y2])     #dimention = 1
+    start_robot1 = robot1.start(start_x1, start_y1)  #dimention = 1
+    start_robot2 = robot2.start(start_x2, start_y2)  #dimention = 1
+    goal_robot1 = robot1.goal(goal_x1, goal_y1)     #dimention = 1
+    goal_robot2 = robot2.goal(goal_x2, goal_y2)     #dimention = 1
 
     initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
 
