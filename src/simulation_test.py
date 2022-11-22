@@ -15,8 +15,8 @@ import cubic_spline_planner
 import random
 from operator import add
 
-get_obstacle = True
-# get_obstacle = False
+# get_obstacle = True
+get_obstacle = False
 save_simulation = False
 path_planning = True
 
@@ -33,7 +33,7 @@ simulation_time_limit = 100 #seconds
 accept_dist = 0.2 #acceptable destination distance
 accept_stop_v = 0.08 #acceptable stopping velocity
 
-desired_speed = 1           # m/s
+desired_speed = 3           # m/s
 max_speed = 10              # m/s
 max_reverse_speed = 5       # m/s
 max_steer_angle = np.pi / 4     #max steering angle
@@ -51,17 +51,17 @@ start_y1 = 0.0  # start y position [m]
 goal_x1 = 30.0  # goal x position [m]
 goal_y1 = 30.0  # goal y position [m]
 
-start_x2 = -20.0  # start x position [m]
-start_y2 = -20.0  # start y position [m]
-goal_x2 = 10.0  # goal x position [m]
-goal_y2 = 10.0  # goal y position [m]
+start_x2 = 5.0  # start x position [m]
+start_y2 = 5.0  # start y position [m]
+goal_x2 = 40.0  # goal x position [m]
+goal_y2 = 40.0  # goal y position [m]
 
 grid_size = 0.2  # potential grid size [m]
 robot_radius = 5.0  # robot radius [m]
 NUM_OF_OBSTACLES = 12
 
-#initial_robot : Set start position and goal position of robots
-class initial_robot:
+#initial_param : Set start position and goal position of robots
+class initial_param:
     def __init__(self, start_x, start_y, goal_x, goal_y):
         self.start_x = start_x
         self.start_y = start_y
@@ -75,6 +75,7 @@ class initial_robot:
     def goal(self):
         goal_robot = np.array([self.goal_x, self.goal_y])
         return goal_robot
+#end
 
 #State : Set x, y, yaw, velocity of robots
 class State:
@@ -94,24 +95,324 @@ class State:
     def state_to_vec(self):
         state_vec = np.array([self.x, self.y, self.yaw, self.v])
         return state_vec
-    #end
+#end
 
-# class Path:
-    # def __init__(self, ):
+#Path : robot path
+class Path:
+    def __init__(self, current, goal, obstacle_state):
+        self.current_x = current[0]
+        self.current_y = current[1]
+        self.goal_x = goal[0]
+        self.goal_y = goal[1]
+        self.obstacle_x = obstacle_state[0]
+        self.obstacle_y = obstacle_state[1]
+        self.obstacle_velocity_x = obstacle_state[2]
+        self.obstacle_velocity_y = obstacle_state[3]
 
-    # def get_motion_model(self, ):
+        self.KP = 15
+        self.ETA = 500
 
-    # def potential_field_planning(self, ):
+    def calc_attractive_potential(self, predictX, predictY):
+        return 0.5 * self.KP * np.hypot(predictX - self.goal_x, predictY - self.goal_y)
 
-    # def get_spline_path(self, ):
+    def calc_repulsive_potential(self, predictX, predictY):
+        obs = len(self.obstacle_x)
+        pot = 0
 
-    # def potential_field_path(self, ):
+        for i in range(obs):
+            pot += 0.5 * self.ETA * np.exp(-np.hypot(predictX - self.obstacle_x[i], predictY - self.obstacle_y[i]))
+
+        return pot
+
+    def get_motion_model(self):
+        motion = []
+        num = 50
+        for i in range(num*2):
+            deg = 2*i*np.pi/num
+            motion.append([np.cos(deg),np.sin(deg)])
+
+        return motion
+
+    def potential_field_planning(self):
+        mot = Path.get_motion_model(self)
+        predictX = []
+        predictY = []
+
+        for i in range(len(mot)):
+            predictX.append(self.current_x + mot[i][0] * grid_size)
+            predictY.append(self.current_y + mot[i][1] * grid_size)
+
+        gnet = []
+        min_gnet = 0
+        min_gnet_pos = 0
+
+        for i in range(len(mot)):
+            ga = Path.calc_attractive_potential(self, predictX[i], predictY[i])
+            gr = Path.calc_repulsive_potential(self, predictX[i], predictY[i])
+            gnet.append(ga + gr)
+
+            if(i==0):
+                min_gnet = gnet[i]
+                min_gnet_pos = i
+            else:
+                if(min_gnet > gnet[i]):
+                    min_gnet = gnet[i]
+                    min_gnet_pos = i
+
+        step_x = mot[min_gnet_pos][0]
+        step_y = mot[min_gnet_pos][1]
+
+        return [step_x,step_y]
+
+    def get_spline_path(self, path_x, path_y):
+        cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(path_x, path_y, 1)
+        return cx, cy, cyaw
+
+    def potential_field_path(self):
+        iter = 0
+        path_x = np.array([])
+        path_y = np.array([])
+
+        while iter <= H + 5:
+            [step_x, step_y] = Path.potential_field_planning(self)
+
+            self.current_x = self.current_x + step_x
+            self.current_y = self.current_y + step_y
+
+            self.obstacle_x = np.add(self.obstacle_x, self.obstacle_velocity_x)
+            self.obstacle_y = np.add(self.obstacle_y, self.obstacle_velocity_y)
+
+            path_x = np.append(path_x, self.current_x)
+            path_y = np.append(path_y, self.current_y)
+
+            iter += 1
+
+        path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
+
+        path = np.array([path_x, path_y, path_yaw])
+        obstacle_state = np.array([self.obstacle_x, self.obstacle_y, self.obstacle_velocity_x, self.obstacle_velocity_y])
+
+        return path, obstacle_state
+#end
+
+class Controller:
+    def __init__(self, path, goal, obstacle_state, path_planning):
+        self.path_x = path[0]
+        self.path_y = path[1]
+        self.path_yaw = path[2]
+        self.goal_x = goal[0]
+        self.goal_y = goal[1]
+        self.obstacle_x = obstacle_state[0]
+        self.obstacle_y = obstacle_state[1]
+        self.obstacle_velocity_x = obstacle_state[2]
+        self.obstacle_velocity_y = obstacle_state[3]
+        self.path_planning = path_planning
+
+        self.mpc_acc = []
+        self.mpc_steer = []
+
+    def get_closest_point_on_path(self, cur_state_vec):
+        diff_x = []
+        diff_y = []
+        dist_sq = []
+
+        for i in range(len(self.path_x)):
+            diff_x.append(self.path_x[i] - cur_state_vec[0])
+            diff_y.append(self.path_y[i] - cur_state_vec[1])
+            dist_sq.append((diff_x[i])**2+(diff_y[i])**2)
+
+        min_d = min(dist_sq)
+        temp = np.argwhere(dist_sq == min_d)
+        target_pt = int(temp[0])
+        return target_pt
+
+    def cal_desired_trajectory(self, cur_state_vec):
+        traj_des = np.zeros((Nx,H+1))   #[4, 6]
+        steer_des = np.zeros((1,H+1))   #[1, 6]
+        distance = 0
+        total_pts = len(self.path_x)
+
+        target_pt = get_closest_point_on_path(self, cur_state_vec)
+
+        traj_des[0,0] = self.path_x[target_pt]
+        traj_des[1,0] = self.path_y[target_pt]
+        traj_des[2,0] = self.path_yaw[target_pt]
+        traj_des[3,0] = desired_speed         #5 m/s
+
+        for i in range(H):
+            distance += abs(cur_state_vec[3]) * dt
+            pts_travelled = int(round(distance))
+
+            if (target_pt + pts_travelled) < total_pts:
+                traj_des[0,i+1] = self.path_x[target_pt + pts_travelled]
+                traj_des[1,i+1] = self.path_y[target_pt + pts_travelled]
+                traj_des[2,i+1] = self.path_yaw[target_pt + pts_travelled]
+                if (target_pt + pts_travelled) == total_pts - 1:
+                    traj_des[3,i+1] = 0.0
+                else:
+                    traj_des[3,i+1] = desired_speed
+            else:
+                traj_des[0,i+1] = self.path_x[-1]
+                traj_des[1,i+1] = self.path_y[-1]
+                traj_des[2,i+1] = self.path_yaw[-1]
+                traj_des[3,i+1] = 0.0
+
+        if traj_des[3,1] == 0.0:
+            traj_des[3,0] = 0.0
+
+        return traj_des, target_pt, steer_des
+
+    def calc_predicted_trajectory(self, cur_state_vec):
+        traj_pred = np.zeros((Nx,H+1))  #Nx = 4, H = 5
+        traj_pred[:,0] = cur_state_vec.T
+        pred_state = State(cur_state_vec[0], cur_state_vec[1], cur_state_vec[2], cur_state_vec[3])
+
+        for i in range(H):
+            pred_state.update_state(self.mpc_acc[i], self.mpc_steer[i])
+            temp_state = pred_state.state_to_vec()
+            traj_pred[:,i+1] = temp_state.T
+
+        return traj_pred
+
+    def run_MPC(self, traj_des, cur_state_vec, steer_des):
+        for iter in range(3):
+            traj_pred = calc_predicted_trajectory(self, cur_state_vec)
+            x = cp.Variable([Nx, H+1]) #(4,6)
+            u = cp.Variable([Nu, H])   #(2,5)
+
+            cost = 0.0
+            constraints = []
+            for i in range(H):
+                cost += cp.sum(W1 * cp.square(u[:, i]))                                   # input weightage
+                cost += cp.sum(W2 * cp.square(traj_des[:, i] - x[:, i]))                  # state error weightage
+                #cost += cp.sum(W2 * cp.square([goal[0],goal[1],0,0] - x[:, i]))                  # terminal cost
+                if i < (H - 1):
+                    cost += cp.sum(W3 * cp.square(u[:, i+1] - u[:, i]))                    # rate of input change weightage
+                    constraints += [cp.abs(u[1, i+1] - u[1, i]) <= max_steer_rate * dt]
+
+                A,B,C = dynamic_model(traj_pred[3,i], traj_pred[2,i], mpc_steer[i])
+                constraints += [x[:, i+1] == A * x[:, i] + B * u[:, i] + C]
 
 
-################################################################################################### ########################### plot_car
+            cost += cp.sum(W4 * cp.square(traj_des[:, H] - x[:, H]))                      # final state error weightage
+            #cost += cp.sum(10 * cp.square([goal[0],goal[1]] - x[:2, H]))                  # terminal cost
+
+            constraints += [x[:, 0] == cur_state_vec]
+            constraints += [x[3, :] <= max_speed]
+            constraints += [x[3, :] >= -max_reverse_speed]
+            constraints += [u[1, :] <= max_steer_angle]
+            constraints += [u[1, :] >= -max_steer_angle]
+            constraints += [u[0, :] <= max_acc]
+            constraints += [u[0, :] >= -3*max_acc]
+
+            prob = cp.Problem(cp.Minimize(cost), constraints)
+            prob.solve()
+
+            mpc_x = x.value[0, :]
+            mpc_y = x.value[1, :]
+            mpc_yaw = x.value[2, :]
+            mpc_v = x.value[3, :]
+            mpc_acc = u.value[0, :]
+            mpc_steer = u.value[1, :]
+
+        return mpc_x, mpc_y, mpc_yaw, mpc_v, mpc_acc, mpc_steer
+
+
+
+
+def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_planning):
+    current_state1 = State(path_robot1[0][0], path_robot1[1][0], path_robot1[2][0], 0.0)
+    current_state2 = State(path_robot2[0][0], path_robot2[1][0], path_robot2[2][0], 0.0)
+    imgct = 0
+
+    #Initialize variables to store actual state values of car
+    t = [0]
+
+    #plotにしか用いてない
+    x1 = [current_state1.x]
+    y1 = [current_state1.y]
+    x2 = [current_state2.x]
+    y2 = [current_state2.y]
+
+    mpc_acc1 = np.zeros(H)
+    mpc_steer1 = np.zeros(H)
+    mpc_acc2 = np.zeros(H)
+    mpc_steer2 = np.zeros(H)
+
+    cur_state_vec1 = current_state1.state_to_vec()
+    cur_state_vec2 = current_state2.state_to_vec()
+
+    while t[-1] <= simulation_time_limit:
+        imgct += 1
+        cur_state_vec1 = current_state1.state_to_vec()
+        cur_state_vec2 = current_state2.state_to_vec()
+
+        traj_des1, target_pt1, steer_des1 = cal_desired_trajectory(cur_state_vec1, path_robot1[0], path_robot1[1], path_robot1[2])
+        traj_des2, target_pt2, steer_des2 = cal_desired_trajectory(cur_state_vec2, path_robot2[0], path_robot2[1], path_robot2[2])
+
+        mpc_x1, mpc_y1, mpc_yaw1, mpc_v1, mpc_acc1, mpc_steer1 = run_MPC(traj_des1, cur_state_vec1, mpc_acc1, mpc_steer1, steer_des1, goal1)
+        mpc_x2, mpc_y2, mpc_yaw2, mpc_v2, mpc_acc2, mpc_steer2 = run_MPC(traj_des2, cur_state_vec2, mpc_acc2, mpc_steer2, steer_des2, goal2)
+
+        current_state1.update_state(mpc_acc1[0], mpc_steer1[0])
+        current_state2.update_state(mpc_acc2[0], mpc_steer2[0])
+
+        time = t[-1] + dt
+        t.append(time)
+
+        #plotにしか用いてない
+        x1.append(current_state1.x)
+        y1.append(current_state1.y)
+        x2.append(current_state2.x)
+        y2.append(current_state2.y)
+
+        if destination_check(current_state1, goal1, target_pt1, len(path_robot1[0])) and destination_check(current_state2, goal2, target_pt2, len(path_robot2[1])):
+            print("Reached destination")
+            break
+
+        plt.cla()
+
+        plt.plot(mpc_x1, mpc_y1, "xr", label="MPC1")                             #赤色のバツ印
+        plt.plot(path_robot1[0], path_robot1[1], "-r", label="course1")                        #赤色の直線
+        plt.plot(obstacle_state[0], obstacle_state[1], "ok")                                                  #黒色の丸印
+        # plt.plot(x1, y1, "ob", label="trajectory1")                              #青色の丸印
+        plt.plot(goal1[0], goal1[1], "om")                                      #紫色の丸印
+        # plt.plot(traj_des1[0, :], traj_des1[1, :], "xk", label="xref1")          #黒色のバツ印
+        # plt.plot(path_robot1[target_pt1], path_robot1[target_pt1], "xg", label="target1")  #緑色のバツ印
+        # plot_car(current_state1.x, current_state1.y, current_state1.yaw, mpc_steer1[0])
+
+        plt.plot(mpc_x2, mpc_y2, "xr", label="MPC2")                             #赤色のバツ印
+        plt.plot(path_robot2[0], path_robot2[1], "-r", label="course2")                        #赤色の直線
+        # plt.plot(x2, y2, "ob", label="trajectory2")                              #青色の丸印
+        plt.plot(goal2[0], goal2[1], "og")                                      #紫色の丸印
+        # plt.plot(traj_des2[0, :], traj_des2[1, :], "xk", label="xref2")          #黒色のバツ印
+        # plt.plot(path_robot2[target_pt2], path_robot2[target_pt2], "xg", label="target2")  #緑色のバツ印
+        # plot_car(current_state2.x, current_state2.y, current_state2.yaw, mpc_steer2[0])
+
+        plt.axis("equal")
+        plt.grid(True)
+        plt.title("Time[s]:" + str(round(time, 2)))
+
+        if save_simulation:
+            plt.savefig('Q_'+str(imgct))
+        plt.pause(0.0001)
+
+        test_state1 = np.array([current_state1.x, current_state1.y])
+        test_state2 = np.array([current_state2.x, current_state2.y])
+
+        # goal2 = np.array([path_robot1[0][target_pt1] - 5, path_robot1[1][target_pt1] - 5])
+
+        if path_planning:
+            test1 = Path(test_state1, goal1, obstacle_state)
+            test2 = Path(test_state2, goal2, obstacle_state)
+            path_robot1, obstacle_state = test1.potential_field_path()
+            path_robot2, obstacle_state = test2.potential_field_path()
+            if stop_planning(path_robot1[0], path_robot1[1], goal1[0], goal1[1]) and stop_planning(path_robot2[0], path_robot2[1], goal2[0], goal2[1]):
+                path_planning = False
+
+#################################################################################################### ########################### plot_car
 # Vehicle parameters
-L = 3.0  # LENGTH[m]
-W = 3.0  # WIDTH[m]
+L = 2.0  # LENGTH[m]
+W = 2.0  # WIDTH[m]
 D = 1.0  # BACKTOWHEEL[m]
 WD = 1.0  # WHEEL_DIA[m]
 WW = 0.25  # WHEEL_WIDTH[m]
@@ -130,15 +431,15 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-y", truckcolor="-k"):  # pragma: n
     wheel1 = np.array([[-WD/2,-WD/2,WD/2,WD/2,-WD/2],[WW/2,-WW/2,-WW/2,WW/2,WW/2]])
     wheel2 = np.array([[-WD/2,-WD/2,WD/2,WD/2,-WD/2],[WW/2,-WW/2,-WW/2,WW/2,WW/2]])
 
-    wheel1[0,:] += 0.5
-    wheel1[1,:] += 1.75
+    # wheel1[0,:] += 1.0
+    wheel1[1,:] += 1.3
     wheel1 = np.matmul(rotate,wheel1)
     wheel1[0,:] += x
     wheel1[1,:] += y
     plt.plot(wheel1[0,:],wheel1[1,:],truckcolor)
 
-    wheel2[0,:] += 0.5
-    wheel2[1,:] -= 1.75
+    # wheel2[0,:] += 1.0
+    wheel2[1,:] -= 1.3
     wheel2 = np.matmul(rotate,wheel2)
     wheel2[0,:] += x
     wheel2[1,:] += y
@@ -168,19 +469,21 @@ def calc_predicted_trajectory(acc,steer,cur_state_vec):
     traj_pred = np.zeros((Nx,H+1))  #Nx = 4, H = 5
     traj_pred[:,0] = cur_state_vec.T
     pred_state = State(cur_state_vec[0], cur_state_vec[1], cur_state_vec[2], cur_state_vec[3])
+
     for i in range(H):
         pred_state.update_state(acc[i], steer[i])
         temp_state = pred_state.state_to_vec()
         traj_pred[:,i+1] = temp_state.T
+
     return traj_pred
 
 ################################################################################################### run_MPC
 def run_MPC(traj_des, cur_state_vec, mpc_acc, mpc_steer, steer_des, goal):
 
     for iter in range(3):
-        traj_pred = calc_predicted_trajectory(mpc_acc,mpc_steer,cur_state_vec)
-        x = cp.Variable([Nx, H+1])
-        u = cp.Variable([Nu, H])
+        traj_pred = calc_predicted_trajectory(mpc_acc, mpc_steer, cur_state_vec)
+        x = cp.Variable([Nx, H+1]) #(4,6)
+        u = cp.Variable([Nu, H])   #(2,5)
 
         cost = 0.0
         constraints = []
@@ -220,7 +523,6 @@ def run_MPC(traj_des, cur_state_vec, mpc_acc, mpc_steer, steer_des, goal):
     return mpc_x, mpc_y, mpc_yaw, mpc_v, mpc_acc, mpc_steer
 
 ################################################################################################### cal_desired_trajectory
-# def cal_desired_trajectory(cur_state_vec, path_x, path_y, path_yaw, target_pt):
 def cal_desired_trajectory(cur_state_vec, path_x, path_y, path_yaw):
     traj_des = np.zeros((Nx,H+1))   #[4, 6]
     steer_des = np.zeros((1,H+1))   #[1, 6]
@@ -306,17 +608,13 @@ def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_
     mpc_steer2 = np.zeros(H)
 
     cur_state_vec1 = current_state1.state_to_vec()
-    # target_pt1 = get_closest_point_on_path(path_robot1[0], path_robot1[1], cur_state_vec1)
     cur_state_vec2 = current_state2.state_to_vec()
-    # target_pt2 = get_closest_point_on_path(path_robot2[0], path_robot2[1], cur_state_vec2)
 
     while t[-1] <= simulation_time_limit:
         imgct += 1
         cur_state_vec1 = current_state1.state_to_vec()
         cur_state_vec2 = current_state2.state_to_vec()
 
-        # traj_des1, target_pt1, steer_des1 = cal_desired_trajectory(cur_state_vec1, path_robot1[0], path_robot1[1], path_robot1[2], target_pt1)
-        # traj_des2, target_pt2, steer_des2 = cal_desired_trajectory(cur_state_vec2, path_robot2[0], path_robot2[1], path_robot2[2], target_pt2)
         traj_des1, target_pt1, steer_des1 = cal_desired_trajectory(cur_state_vec1, path_robot1[0], path_robot1[1], path_robot1[2])
         traj_des2, target_pt2, steer_des2 = cal_desired_trajectory(cur_state_vec2, path_robot2[0], path_robot2[1], path_robot2[2])
 
@@ -341,22 +639,22 @@ def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_
 
         plt.cla()
 
-        # plt.plot(mpc_x1, mpc_y1, "xr", label="MPC1")                             #赤色のバツ印
+        plt.plot(mpc_x1, mpc_y1, "xr", label="MPC1")                             #赤色のバツ印
         plt.plot(path_robot1[0], path_robot1[1], "-r", label="course1")                        #赤色の直線
         plt.plot(obstacle_state[0], obstacle_state[1], "ok")                                                  #黒色の丸印
         # plt.plot(x1, y1, "ob", label="trajectory1")                              #青色の丸印
         plt.plot(goal1[0], goal1[1], "om")                                      #紫色の丸印
         # plt.plot(traj_des1[0, :], traj_des1[1, :], "xk", label="xref1")          #黒色のバツ印
-        plt.plot(path_robot1[target_pt1], path_robot1[target_pt1], "xg", label="target1")  #緑色のバツ印
-        plot_car(current_state1.x, current_state1.y, current_state1.yaw, mpc_steer1[0])
+        # plt.plot(path_robot1[target_pt1], path_robot1[target_pt1], "xg", label="target1")  #緑色のバツ印
+        # plot_car(current_state1.x, current_state1.y, current_state1.yaw, mpc_steer1[0])
 
-        # plt.plot(mpc_x2, mpc_y2, "xr", label="MPC2")                             #赤色のバツ印
+        plt.plot(mpc_x2, mpc_y2, "xr", label="MPC2")                             #赤色のバツ印
         plt.plot(path_robot2[0], path_robot2[1], "-r", label="course2")                        #赤色の直線
         # plt.plot(x2, y2, "ob", label="trajectory2")                              #青色の丸印
         plt.plot(goal2[0], goal2[1], "og")                                      #紫色の丸印
         # plt.plot(traj_des2[0, :], traj_des2[1, :], "xk", label="xref2")          #黒色のバツ印
-        plt.plot(path_robot2[target_pt2], path_robot2[target_pt2], "xg", label="target2")  #緑色のバツ印
-        plot_car(current_state2.x, current_state2.y, current_state2.yaw, mpc_steer2[0])
+        # plt.plot(path_robot2[target_pt2], path_robot2[target_pt2], "xg", label="target2")  #緑色のバツ印
+        # plot_car(current_state2.x, current_state2.y, current_state2.yaw, mpc_steer2[0])
 
         plt.axis("equal")
         plt.grid(True)
@@ -372,12 +670,12 @@ def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_
         # goal2 = np.array([path_robot1[0][target_pt1] - 5, path_robot1[1][target_pt1] - 5])
 
         if path_planning:
-            path_robot1, obstacle_state = potential_field_path(test_state1, goal1, obstacle_state)
-            path_robot2, obstacle_state = potential_field_path(test_state2, goal2, obstacle_state)
+            test1 = Path(test_state1, goal1, obstacle_state)
+            test2 = Path(test_state2, goal2, obstacle_state)
+            path_robot1, obstacle_state = test1.potential_field_path()
+            path_robot2, obstacle_state = test2.potential_field_path()
             if stop_planning(path_robot1[0], path_robot1[1], goal1[0], goal1[1]) and stop_planning(path_robot2[0], path_robot2[1], goal2[0], goal2[1]):
                 path_planning = False
-
-    # return 0
 
 def stop_planning(path_x, path_y, goal_x, goal_y):
     dist_to_dest = (path_x[-1] - goal_x)**2 + (path_y[-1] - goal_y)**2
@@ -386,93 +684,11 @@ def stop_planning(path_x, path_y, goal_x, goal_y):
     else:
         return False
 
-###########################################################################################################################################
-#                                                                                                                                         #
-#                                                                                                                                         #
-#                       PATH PLANNING                                                                                                     #
-#                                                                                                                                         #
-#                                                                                                                                         #
-###########################################################################################################################################
-# Parameters
-KP = 15.0  # attractive potential gain
-ETA = 500.0  # repulsive potential gain
-
-show_animation=True
-
-def get_motion_model():
-    motion = []
-    num = 50
-    for i in range(num*2):
-        deg = 2*i*np.pi/num
-        motion.append([np.cos(deg),np.sin(deg)])
-
-    return motion
-
-def potential_field_planning(position, goal, obstacle_state):
-     mot = get_motion_model()
-     predictX = []
-     predictY = []
-
-     for i in range(len(mot)):
-         predictX.append(position[0] + mot[i][0] * grid_size)
-         predictY.append(position[1] + mot[i][1] * grid_size)
-
-     gnet = []
-     min_gnet = 0
-     min_gnet_pos = 0
-     for i in range(len(mot)):
-         ga = 0.5 * KP * np.hypot(predictX[i] - goal[0], predictY[i] - goal[1])
-         gr = 0.0
-         for j in range(len(obstacle_state)):
-             gr += 0.5 * ETA * np.exp(-np.hypot(predictX[i] - obstacle_state[j][0], predictY[i] - obstacle_state[j][1]))
-
-         gnet.append(ga + gr)
-
-         if(i==0):
-             min_gnet = gnet[i]
-             min_gnet_pos = i
-         else:
-             if(min_gnet > gnet[i]):
-                 min_gnet = gnet[i]
-                 min_gnet_pos = i
-
-     step_x = mot[min_gnet_pos][0]
-     step_y = mot[min_gnet_pos][1]
-
-     return [step_x,step_y]
-
-def get_spline_path(ax,ay,dl):
-    cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(ax, ay, dl)
-    return cx, cy, cyaw
-
-def potential_field_path(position, goal, obstacle_state):
-    iter = 0
-    path_x = np.array([])
-    path_y = np.array([])
-
-    while iter < H:
-         [step_x, step_y] = potential_field_planning(position, goal, obstacle_state)
-
-         position[0] = position[0] + step_x
-         position[1] = position[1] + step_y
-
-         obstacle_state[0] = np.add(obstacle_state[0], obstacle_state[2])
-         obstacle_state[1] = np.add(obstacle_state[1], obstacle_state[3])
-
-         path_x = np.append(path_x, position[0])
-         path_y = np.append(path_y, position[1])
-
-         iter += 1
-
-    path_x, path_y, path_yaw = get_spline_path(path_x, path_y, 1)
-    path = np.array([path_x, path_y, path_yaw])
-    return path, obstacle_state
-
 def initialize_obstacles(NUM_OF_OBSTACLES):
     if get_obstacle:
-        ox = [10, 20, 30, 40, 50]
-        oy = [0, 0, 0, 0, 0]
-        velX = [-0.05, -0.05, -0.05, -0.05, -0.05]
+        ox = [10, 15, 20, 25, 30, 35, 40, 45, 50]
+        oy = [0, 10, 20, 25, 30, 35, 40, 45, 50]
+        velX = [-0.02, -0.02, -0.02, -0.02, -0.02]
         velY = [0, 0, 0, 0, 0]
         # ox = [0]
         # oy = [0]
@@ -485,29 +701,31 @@ def initialize_obstacles(NUM_OF_OBSTACLES):
         velY = []
 
         for i in range(1,NUM_OF_OBSTACLES):
-             ox.append(random.randrange(10, gx, 1))
-             oy.append(random.randrange(10, gy, 1))
-             velX.append((np.random.random()/40)*(-1)**i)
-             velY.append((np.random.random()/40)*(-1)**i)
+             ox.append(random.randrange(5, 30, 1))
+             oy.append(random.randrange(5, 30, 1))
+             velX.append((np.random.random()/70)*(-1)**i)
+             velY.append((np.random.random()/70)*(-1)**i)
 
     obstacle_state = np.array([ox, oy, velX, velY])
     return obstacle_state
 
 ################################################################################################### main
 def main():
-    robot1 = initial_robot(start_x1, start_y1, goal_x1, goal_y1)
-    robot2 = initial_robot(start_x2, start_y2, goal_x2, goal_y2)
-    # robot2 = initial_robot(start_x2, start_y2, start_x1 - 5, start_y1  - 5)
+    initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
+
+    robot1 = initial_param(start_x1, start_y1, goal_x1, goal_y1)
+    robot2 = initial_param(start_x2, start_y2, goal_x2, goal_y2)
+    # robot2 = initial_param(start_x2, start_y2, start_x1 - 5, start_y1  - 5)
 
     start_robot1 = robot1.start()  #dimention = 1
     start_robot2 = robot2.start()  #dimention = 1
     goal_robot1 = robot1.goal()     #dimention = 1
     goal_robot2 = robot2.goal()     #dimention = 1
 
-    initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
-
-    path_robot1, obstacle_state = potential_field_path(start_robot1, goal_robot1, initial_obstacle_state)
-    path_robot2, obstacle_state = potential_field_path(start_robot2, goal_robot2, initial_obstacle_state)
+    test1 = Path(start_robot1, goal_robot1, initial_obstacle_state)
+    test2 = Path(start_robot2, goal_robot2, initial_obstacle_state)
+    path_robot1, obstacle_state = test1.potential_field_path()
+    path_robot2, obstacle_state = test2.potential_field_path()
 
     run_controller(path_robot1, path_robot2, goal_robot1, goal_robot2, obstacle_state, path_planning)
 
