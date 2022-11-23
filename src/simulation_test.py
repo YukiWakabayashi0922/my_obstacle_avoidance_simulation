@@ -208,9 +208,6 @@ class Controller:
         self.obstacle_velocity_y = obstacle_state[3]
         self.path_planning = path_planning
 
-        self.mpc_acc = []
-        self.mpc_steer = []
-
     def get_closest_point_on_path(self, cur_state_vec):
         diff_x = []
         diff_y = []
@@ -228,7 +225,6 @@ class Controller:
 
     def cal_desired_trajectory(self, cur_state_vec):
         traj_des = np.zeros((Nx,H+1))   #[4, 6]
-        steer_des = np.zeros((1,H+1))   #[1, 6]
         distance = 0
         total_pts = len(self.path_x)
 
@@ -260,9 +256,9 @@ class Controller:
         if traj_des[3,1] == 0.0:
             traj_des[3,0] = 0.0
 
-        return traj_des, target_pt, steer_des
+        return traj_des, target_pt
 
-    def calc_predicted_trajectory(self, cur_state_vec):
+    def calc_predicted_trajectory(self, cur_state_vec, mpc_acc, mpc_steer):
         traj_pred = np.zeros((Nx,H+1))  #Nx = 4, H = 5
         traj_pred[:,0] = cur_state_vec.T
         pred_state = State(cur_state_vec[0], cur_state_vec[1], cur_state_vec[2], cur_state_vec[3])
@@ -274,9 +270,27 @@ class Controller:
 
         return traj_pred
 
-    def run_MPC(self, traj_des, cur_state_vec, steer_des):
+    def dynamic_model(self, velocity, yaw, steer):
+        A = np.array([[1.0 , 0.0 , - dt * velocity * math.sin(yaw), dt * math.cos(yaw)],\
+                      [0.0 , 1.0 , dt * velocity * math.cos(yaw),  dt * math.sin(yaw)],\
+                      [0.0 , 0.0 , 1.0                , dt * math.tan(steer) / W_base],\
+                      [0.0 , 0.0 , 0.0 , 1.0]])
+
+        B = np.array([[0.0 , 0.0],\
+                      [0.0 , 0.0],\
+                      [0.0 , dt * velocity / (W_base * math.cos(steer) ** 2)],\
+                      [dt  , 0.0]])
+
+
+        C = np.array([dt * velocity * math.sin(yaw) * yaw,\
+                       - dt * velocity * math.cos(yaw) * yaw ,\
+                      - dt * velocity * steer / (W_base * math.cos(steer) ** 2) ,\
+                      0.0])
+        return A, B, C
+
+    def run_MPC(self, cur_state_vec, traj_des, mpc_acc, mpc_steer):
         for iter in range(3):
-            traj_pred = calc_predicted_trajectory(self, cur_state_vec)
+            traj_pred = calc_predicted_trajectory(self, cur_state_vec, mpc_acc, mpc_steer)
             x = cp.Variable([Nx, H+1]) #(4,6)
             u = cp.Variable([Nu, H])   #(2,5)
 
@@ -285,17 +299,14 @@ class Controller:
             for i in range(H):
                 cost += cp.sum(W1 * cp.square(u[:, i]))                                   # input weightage
                 cost += cp.sum(W2 * cp.square(traj_des[:, i] - x[:, i]))                  # state error weightage
-                #cost += cp.sum(W2 * cp.square([goal[0],goal[1],0,0] - x[:, i]))                  # terminal cost
                 if i < (H - 1):
                     cost += cp.sum(W3 * cp.square(u[:, i+1] - u[:, i]))                    # rate of input change weightage
                     constraints += [cp.abs(u[1, i+1] - u[1, i]) <= max_steer_rate * dt]
 
-                A,B,C = dynamic_model(traj_pred[3,i], traj_pred[2,i], mpc_steer[i])
+                A,B,C = dynamic_model(self, traj_pred[3,i], traj_pred[2,i], mpc_steer[i])
                 constraints += [x[:, i+1] == A * x[:, i] + B * u[:, i] + C]
 
-
             cost += cp.sum(W4 * cp.square(traj_des[:, H] - x[:, H]))                      # final state error weightage
-            #cost += cp.sum(10 * cp.square([goal[0],goal[1]] - x[:2, H]))                  # terminal cost
 
             constraints += [x[:, 0] == cur_state_vec]
             constraints += [x[3, :] <= max_speed]
@@ -317,7 +328,18 @@ class Controller:
 
         return mpc_x, mpc_y, mpc_yaw, mpc_v, mpc_acc, mpc_steer
 
-
+    def destination_check(self, cur_state_vec, target_pt):
+        a = 0
+        dist_to_dest = (cur_state_vec[0] - self.goal_x)**2 + (cur_state_vec[1] - self.goal_y)**2
+        if dist_to_dest < accept_dist:
+            a += 1
+        if cur_state_vec[3] < abs(accept_stop_v):
+            a += 1
+        if abs(target_pt - len(self.path_x)) < 5:
+            a += 1
+        if a == 3:
+            return True
+        return False
 
 
 def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_planning):
@@ -347,11 +369,11 @@ def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_
         cur_state_vec1 = current_state1.state_to_vec()
         cur_state_vec2 = current_state2.state_to_vec()
 
-        traj_des1, target_pt1, steer_des1 = cal_desired_trajectory(cur_state_vec1, path_robot1[0], path_robot1[1], path_robot1[2])
-        traj_des2, target_pt2, steer_des2 = cal_desired_trajectory(cur_state_vec2, path_robot2[0], path_robot2[1], path_robot2[2])
+        traj_des1, target_pt1 = cal_desired_trajectory(cur_state_vec1, path_robot1[0], path_robot1[1], path_robot1[2])
+        traj_des2, target_pt2 = cal_desired_trajectory(cur_state_vec2, path_robot2[0], path_robot2[1], path_robot2[2])
 
-        mpc_x1, mpc_y1, mpc_yaw1, mpc_v1, mpc_acc1, mpc_steer1 = run_MPC(traj_des1, cur_state_vec1, mpc_acc1, mpc_steer1, steer_des1, goal1)
-        mpc_x2, mpc_y2, mpc_yaw2, mpc_v2, mpc_acc2, mpc_steer2 = run_MPC(traj_des2, cur_state_vec2, mpc_acc2, mpc_steer2, steer_des2, goal2)
+        mpc_x1, mpc_y1, mpc_yaw1, mpc_v1, mpc_acc1, mpc_steer1 = run_MPC(traj_des1, cur_state_vec1, mpc_acc1, mpc_steer1, goal1)
+        mpc_x2, mpc_y2, mpc_yaw2, mpc_v2, mpc_acc2, mpc_steer2 = run_MPC(traj_des2, cur_state_vec2, mpc_acc2, mpc_steer2, goal2)
 
         current_state1.update_state(mpc_acc1[0], mpc_steer1[0])
         current_state2.update_state(mpc_acc2[0], mpc_steer2[0])
@@ -447,14 +469,14 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-y", truckcolor="-k"):  # pragma: n
 
 ################################################################################################### dynamic_model
 def dynamic_model(velocity, yaw, steer):
-    A = np.array([[1.0 , 0.0 , - dt * velocity * math.sin(yaw), dt * math.cos(yaw) ],\
+    A = np.array([[1.0 , 0.0 , - dt * velocity * math.sin(yaw), dt * math.cos(yaw)],\
                   [0.0 , 1.0 , dt * velocity * math.cos(yaw),  dt * math.sin(yaw)],\
                   [0.0 , 0.0 , 1.0                , dt * math.tan(steer) / W_base],\
                   [0.0 , 0.0 , 0.0 , 1.0]])
 
-    B = np.array([[0.0 , 0.0 ],\
-                  [0.0 , 0.0 ],\
-                  [0.0 , dt * velocity / (W_base * math.cos(steer) ** 2) ],\
+    B = np.array([[0.0 , 0.0],\
+                  [0.0 , 0.0],\
+                  [0.0 , dt * velocity / (W_base * math.cos(steer) ** 2)],\
                   [dt  , 0.0]])
 
 
@@ -478,7 +500,7 @@ def calc_predicted_trajectory(acc,steer,cur_state_vec):
     return traj_pred
 
 ################################################################################################### run_MPC
-def run_MPC(traj_des, cur_state_vec, mpc_acc, mpc_steer, steer_des, goal):
+def run_MPC(traj_des, cur_state_vec, mpc_acc, mpc_steer, goal):
 
     for iter in range(3):
         traj_pred = calc_predicted_trajectory(mpc_acc, mpc_steer, cur_state_vec)
@@ -525,7 +547,6 @@ def run_MPC(traj_des, cur_state_vec, mpc_acc, mpc_steer, steer_des, goal):
 ################################################################################################### cal_desired_trajectory
 def cal_desired_trajectory(cur_state_vec, path_x, path_y, path_yaw):
     traj_des = np.zeros((Nx,H+1))   #[4, 6]
-    steer_des = np.zeros((1,H+1))   #[1, 6]
     distance = 0
     total_pts = len(path_x)
 
@@ -555,7 +576,7 @@ def cal_desired_trajectory(cur_state_vec, path_x, path_y, path_yaw):
             traj_des[3,i+1] = 0.0
     if traj_des[3,1] == 0.0:
         traj_des[3,0] = 0.0
-    return traj_des, target_pt, steer_des
+    return traj_des, target_pt
 
 ################################################################################################### get_closest_point_on_path
 def get_closest_point_on_path(path_x, path_y, cur_state_vec):
@@ -615,11 +636,11 @@ def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_
         cur_state_vec1 = current_state1.state_to_vec()
         cur_state_vec2 = current_state2.state_to_vec()
 
-        traj_des1, target_pt1, steer_des1 = cal_desired_trajectory(cur_state_vec1, path_robot1[0], path_robot1[1], path_robot1[2])
-        traj_des2, target_pt2, steer_des2 = cal_desired_trajectory(cur_state_vec2, path_robot2[0], path_robot2[1], path_robot2[2])
+        traj_des1, target_pt1 = cal_desired_trajectory(cur_state_vec1, path_robot1[0], path_robot1[1], path_robot1[2])
+        traj_des2, target_pt2 = cal_desired_trajectory(cur_state_vec2, path_robot2[0], path_robot2[1], path_robot2[2])
 
-        mpc_x1, mpc_y1, mpc_yaw1, mpc_v1, mpc_acc1, mpc_steer1 = run_MPC(traj_des1, cur_state_vec1, mpc_acc1, mpc_steer1, steer_des1, goal1)
-        mpc_x2, mpc_y2, mpc_yaw2, mpc_v2, mpc_acc2, mpc_steer2 = run_MPC(traj_des2, cur_state_vec2, mpc_acc2, mpc_steer2, steer_des2, goal2)
+        mpc_x1, mpc_y1, mpc_yaw1, mpc_v1, mpc_acc1, mpc_steer1 = run_MPC(traj_des1, cur_state_vec1, mpc_acc1, mpc_steer1, goal1)
+        mpc_x2, mpc_y2, mpc_yaw2, mpc_v2, mpc_acc2, mpc_steer2 = run_MPC(traj_des2, cur_state_vec2, mpc_acc2, mpc_steer2, goal2)
 
         current_state1.update_state(mpc_acc1[0], mpc_steer1[0])
         current_state2.update_state(mpc_acc2[0], mpc_steer2[0])
