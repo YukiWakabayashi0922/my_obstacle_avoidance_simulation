@@ -341,6 +341,12 @@ class Controller:
             return True
         return False
 
+    def stop_planning(self):
+        dist_to_dest = (self.path_x - self.goal_x)**2 + (self.path_y - self.goal_y)**2
+        if dist_to_dest < accept_dist:
+            return True
+        else:
+            return False
 
 def run_controller(path_robot1, path_robot2, goal1, goal2, obstacle_state, path_planning):
     current_state1 = State(path_robot1[0][0], path_robot1[1][0], path_robot1[2][0], 0.0)
