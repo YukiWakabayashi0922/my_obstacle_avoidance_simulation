@@ -15,8 +15,8 @@ import cubic_spline_planner
 import random
 from operator import add
 
-# get_obstacle = True
-get_obstacle = False
+get_obstacle = True
+# get_obstacle = False
 save_simulation = False
 
 Nx = 4 #number of states
@@ -31,6 +31,7 @@ H = 5 # Horizon length
 simulation_time_limit = 100 #seconds
 accept_dist = 0.5 #acceptable destination distance
 accept_stop_v = 0.08 #acceptable stopping velocity
+accept_robot_distance = 8.0
 
 desired_speed = 0.1           # m/s
 max_speed = 1              # m/s
@@ -45,18 +46,18 @@ W3 = np.array([0.01, 0.1])  # rate of input change weightage
 W4 = W2  # state error weightage
 
 #potential field
-start_x1 = 10.0  # start x position [m]
+start_x1 = 0.0  # start x position [m]
 start_y1 = 10.0  # start y position [m]
 goal_x1 = 30.0  # goal x position [m]
-goal_y1 = 30.0  # goal y position [m]
+goal_y1 = 10.0  # goal y position [m]
 
-start_x2 = 0.0  # start x position [m]
+start_x2 = -5.0  # start x position [m]
 start_y2 = 5.0  # start y position [m]
 goal_x2 = 40.0  # goal x position [m]
 goal_y2 = 40.0  # goal y position [m]
 
-start_x3 = 10.0  # start x position [m]
-start_y3 = -5.0  # start y position [m]
+start_x3 = -5.0  # start x position [m]
+start_y3 = 15.0  # start y position [m]
 goal_x3 = 50.0  # goal x position [m]
 goal_y3 = 50.0  # goal y position [m]
 
@@ -419,10 +420,14 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-y", truckcolor="-k"):  # pragma: n
 
 def initialize_obstacles(NUM_OF_OBSTACLES):
     if get_obstacle:
-        ox = [10, 15, 20, 25, 30, 35, 40, 45, 50]
-        oy = [0, 10, 20, 25, 30, 35, 40, 45, 50]
-        velX = [-0.02, -0.02, -0.02, -0.02, -0.02]
-        velY = [0, 0, 0, 0, 0]
+        ox = [8, 9, 10, 11, 12, 13, 14, 15]
+                # , 16, 17, 18, 19, 20, 21, 22, 23]
+        oy = [6, 5, 4, 3, 2, 1, 0, -1]
+                # , -2, -3, -4, -5, -6, -7, -8, -9]
+        velX = [-0.05, -0.05, -0.05, -0.05, -0.05, -0.05, -0.05, -0.05]
+                # , -0.02, -0.02, -0.02, -0.02, -0.02, -0.02, -0.02, -0.02]
+        velY = [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+                # , 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02]
         # ox = [0]
         # oy = [0]
         # velX = [0.05]
@@ -464,9 +469,9 @@ def main():
     start_robot3 = robot3.start()  #dimention = 1
     goal_robot1 = robot1.goal()     #dimention = 1
     # goal_robot2 = robot2.goal()     #dimention = 1
-    goal_robot2 = robot1.start()     #dimention = 1
+    goal_robot2 = robot1.goal()     #dimention = 1
     # goal_robot3 = robot3.goal()     #dimention = 1
-    goal_robot3 = robot2.start()     #dimention = 1
+    goal_robot3 = robot1.goal()     #dimention = 1
 
     test1 = Path(start_robot1, goal_robot1, initial_obstacle_state)
     test2 = Path(start_robot2, goal_robot2, initial_obstacle_state)
@@ -523,9 +528,9 @@ def main():
         plt.plot(mpc_x2, mpc_y2, "or", label="MPC2")
         plt.plot(mpc_x3, mpc_y3, "or", label="MPC3")
 
-        plt.plot(control_robot1.path_x, control_robot1.path_y, "-r", label="course1")
-        plt.plot(control_robot2.path_x, control_robot2.path_y, "-r", label="course2")
-        plt.plot(control_robot3.path_x, control_robot3.path_y, "-r", label="course3")
+        # plt.plot(control_robot1.path_x, control_robot1.path_y, "-r", label="course1")
+        # plt.plot(control_robot2.path_x, control_robot2.path_y, "-r", label="course2")
+        # plt.plot(control_robot3.path_x, control_robot3.path_y, "-r", label="course3")
 
         plt.plot(control_robot1.goal_x, control_robot1.goal_y, "om")
         plt.plot(control_robot2.goal_x, control_robot2.goal_y, "om")
@@ -544,6 +549,20 @@ def main():
         if save_simulation:
             plt.savefig('Q_' + str(imgct))
         plt.pause(0.0001)
+
+        robot_distance12 = np.hypot(current_state1.x - current_state2.x, current_state1.y - current_state2.y)
+        robot_distance13 = np.hypot(current_state1.x - current_state3.x, current_state1.y - current_state3.y)
+
+        if robot_distance12 >= accept_robot_distance:
+            path_planning1 = False
+            path_planning3 = False
+        elif robot_distance13 >= accept_robot_distance:
+            path_planning1 = False
+            path_planning2 = False
+        else:
+            path_planning1 = True
+            path_planning2 = True
+            path_planning3 = True
 
         new_state1 = np.array([current_state1.x, current_state1.y])
         new_state2 = np.array([current_state2.x, current_state2.y])
@@ -583,13 +602,13 @@ def main():
 
         if stop1 and stop2 and stop3:
             print('Finish!')
-            break
+            # break
 
             # if check1.stop_planning() and check2.stop_planning() and check3.stop_planning():
                 # path_planning = False
 
-        goal_robot2 = np.array([path_robot1[0][0] - 2, path_robot1[1][0] - 2])
-        goal_robot3 = np.array([path_robot2[0][0] - 2, path_robot2[1][0] - 2])
+        goal_robot2 = np.array([path_robot1[0][0] - 3, path_robot1[1][0] - 3])
+        goal_robot3 = np.array([path_robot1[0][0] - 3, path_robot1[1][0] + 3])
 
 if __name__ == '__main__':
     main()
