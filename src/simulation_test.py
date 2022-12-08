@@ -302,16 +302,16 @@ class Controller:
             cost = 0.0
             constraints = []
             for i in range(H):
-                cost += cp.sum(W1 * cp.square(u[:, i]))                                   # input weightage
-                cost += cp.sum(W2 * cp.square(traj_des[:, i] - x[:, i]))                  # state error weightage
+                cost += cp.sum(W1 @ cp.square(u[:, i]))                                   # input weightage
+                cost += cp.sum(W2 @ cp.square(traj_des[:, i] - x[:, i]))                  # state error weightage
                 if i < (H - 1):
-                    cost += cp.sum(W3 * cp.square(u[:, i+1] - u[:, i]))                    # rate of input change weightage
+                    cost += cp.sum(W3 @ cp.square(u[:, i+1] - u[:, i]))                    # rate of input change weightage
                     constraints += [cp.abs(u[1, i+1] - u[1, i]) <= max_steer_rate * dt]
 
                 A,B,C = Controller.dynamic_model(self, traj_pred[3,i], traj_pred[2,i], self.mpc_steer[i])
-                constraints += [x[:, i+1] == A * x[:, i] + B * u[:, i] + C]
+                constraints += [x[:, i+1] == A @ x[:, i] + B @ u[:, i] + C]
 
-            cost += cp.sum(W4 * cp.square(traj_des[:, H] - x[:, H]))                      # final state error weightage
+            cost += cp.sum(W4 @ cp.square(traj_des[:, H] - x[:, H]))                      # final state error weightage
 
             constraints += [x[:, 0] == cur_state_vec]
             constraints += [x[3, :] <= max_speed]
@@ -329,24 +329,25 @@ class Controller:
             self.mpc_acc = u.value[0, :]
             self.mpc_steer = u.value[1, :]
 
-        mpc = np.array([mpc_x, mpc_y, self.mpc_acc, self.mpc_steer])
-        return mpc
+        # mpc = np.array([mpc_x, mpc_y, self.mpc_acc, self.mpc_steer])
+        # return mpc
+        return mpc_x, mpc_y, self.mpc_acc, self.mpc_steer
 
     def run_controller(self):
         current_state = State(self.path_x[0], self.path_y[0], self.path_yaw[0], 0.0)
         cur_state_vec = current_state.state_to_vec()
 
-        # mpc_acc = np.zeros(H)
-        # mpc_steer = np.zeros(H)
-
         traj_des, target_pt = Controller.cal_desired_trajectory(self, cur_state_vec)
-        mpc = Controller.run_MPC(self, cur_state_vec, traj_des)
+        # mpc = Controller.run_MPC(self, cur_state_vec, traj_des)
+        mpc_x, mpc_y, mpc_acc, mpc_steer = Controller.run_MPC(self, cur_state_vec, traj_des)
 
-        new_mpc_acc = mpc[2]
-        new_mpc_steer = mpc[3]
-        current_state.update_state(new_mpc_acc[0], new_mpc_steer[0])
+        # new_mpc_acc = mpc[2]
+        # new_mpc_steer = mpc[3]
+        # current_state.update_state(new_mpc_acc[0], new_mpc_steer[0])
+        current_state.update_state(mpc_acc[0], mpc_steer[0])
 
-        return target_pt, mpc, current_state
+        # return target_pt, mpc, current_state
+        return target_pt, mpc_x, mpc_y, mpc_acc, mpc_steer, current_state
 
 class Check:
     def __init__(self, current_state, goal, target_pt, path):
@@ -480,16 +481,19 @@ def main():
         control_robot1 = Controller(path_robot1, goal_robot1, obstacle_state, mpc_acc1, mpc_steer1)
         control_robot2 = Controller(path_robot2, goal_robot2, obstacle_state, mpc_acc2, mpc_steer2)
         control_robot3 = Controller(path_robot3, goal_robot3, obstacle_state, mpc_acc3, mpc_steer3)
-        target_pt1, mpc1, current_state1 = control_robot1.run_controller()
-        target_pt2, mpc2, current_state2 = control_robot2.run_controller()
-        target_pt3, mpc3, current_state3 = control_robot3.run_controller()
+        # target_pt1, mpc1, current_state1 = control_robot1.run_controller()
+        # target_pt2, mpc2, current_state2 = control_robot2.run_controller()
+        # target_pt3, mpc3, current_state3 = control_robot3.run_controller()
+        target_pt1, mpc_x1, mpc_y1, mpc_acc1, mpc_steer1, current_state1 = control_robot1.run_controller()
+        target_pt2, mpc_x2, mpc_y2, mpc_acc2, mpc_steer2, current_state2 = control_robot2.run_controller()
+        target_pt3, mpc_x3, mpc_y3, mpc_acc3, mpc_steer3, current_state3 = control_robot3.run_controller()
 
-        mpc_acc1 = mpc1[2]
-        mpc_acc2 = mpc2[2]
-        mpc_acc3 = mpc3[2]
-        mpc_steer1 = mpc1[3]
-        mpc_steer2 = mpc2[3]
-        mpc_steer3 = mpc3[3]
+        # mpc_acc1 = mpc1[2]
+        # mpc_acc2 = mpc2[2]
+        # mpc_acc3 = mpc3[2]
+        # mpc_steer1 = mpc1[3]
+        # mpc_steer2 = mpc2[3]
+        # mpc_steer3 = mpc3[3]
 
         time = t[-1] + dt
         t.append(time)
@@ -503,9 +507,12 @@ def main():
 
         plt.cla()
 
-        plt.plot(mpc1[0], mpc1[1], "xr", label="MPC1")
-        plt.plot(mpc2[0], mpc2[1], "xr", label="MPC2")
-        plt.plot(mpc3[0], mpc3[1], "xr", label="MPC3")
+        # plt.plot(mpc1[0], mpc1[1], "xr", label="MPC1")
+        # plt.plot(mpc2[0], mpc2[1], "xr", label="MPC2")
+        # plt.plot(mpc3[0], mpc3[1], "xr", label="MPC3")
+        plt.plot(mpc_x1, mpc_y1, "xr", label="MPC1")
+        plt.plot(mpc_x2, mpc_y2, "xr", label="MPC2")
+        plt.plot(mpc_x3, mpc_y3, "xr", label="MPC3")
 
         plt.plot(control_robot1.path_x, control_robot1.path_y, "-r", label="course1")
         plt.plot(control_robot2.path_x, control_robot2.path_y, "-r", label="course2")
@@ -537,9 +544,9 @@ def main():
             new1 = Path(new_state1, goal_robot1, obstacle_state)
             new2 = Path(new_state2, goal_robot2, obstacle_state)
             new3 = Path(new_state3, goal_robot3, obstacle_state)
-            path_robot1, obstacle_state = test1.potential_field_path()
-            path_robot2, obstacle_state = test2.potential_field_path()
-            path_robot3, obstacle_state = test3.potential_field_path()
+            path_robot1, obstacle_state = new1.potential_field_path()
+            path_robot2, obstacle_state = new2.potential_field_path()
+            path_robot3, obstacle_state = new3.potential_field_path()
 
             if check1.stop_planning() and check2.stop_planning() and check3.stop_planning():
                 path_planning = False
