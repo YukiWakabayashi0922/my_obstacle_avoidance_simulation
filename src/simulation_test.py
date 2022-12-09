@@ -377,29 +377,52 @@ class Check:
         else:
             return False
 
-class plot:
-    def __init__(self, mpc_state, now_state, goal, obstacle_state):
-        self.mpc_x = mpc_state[0]
-        self.mpc_y = mpc_state[1]
-        self.x = now_state[0]
-        self.y = now_state[1]
-        self.goal_x = goal[0]
-        self.goal_y = goal[1]
+class Plot:
+    def __init__(self, mpc_state, now_state, goal_robot, obstacle_state):
+        self.mpc_state = mpc_state
+        self.now_state = now_state
+        self.goal_robot = goal_robot
         self.obstacle_x = obstacle_state[0]
         self.obstacle_y = obstacle_state[1]
 
-    def plot_leader_robot(self):
-        plt.plot(self.mpc_x, self.mpc_y, "or")
-        plt.plot(self.x, self.y, "-r")
-        plt.plot(self.goal_x, self.goal_y, "om")
+    # def plot_leader_robot(self):
+        # plt.plot(self.mpc_x, self.mpc_y, "or")
+        # plt.plot(self.x, self.y, "-r")
+        # plt.plot(self.goal_x, self.goal_y, "om")
 
-    def plot_follower_robot(self):
-        plt.plot(self.mpc_x, self.mpc_y, "og")
-        plt.plot(self.x, self.y, "-g")
-        plt.plot(self.goal_x, self.goal_y, "om")
+    # def plot_follower_robot(self):
+        # plt.plot(self.mpc_x, self.mpc_y, "og")
+        # plt.plot(self.x, self.y, "-g")
+        # plt.plot(self.goal_x, self.goal_y, "om")
 
     def plot_obstacle(self):
         plt.plot(self.obstacle_x, self.obstacle_y, "ok")
+
+    def plot_do(self):
+        plt.cla()
+
+        for i in range(robot_number):
+            if i == 0:
+                plt.plot(self.mpc_state[i][0], self.mpc_state[i][1], "or")
+                plt.plot(self.now_state[i][0], self.now_state[i][1], "-r")
+                plt.plot(self.goal_robot[i][0], self.goal_robot[i][1], "om")
+                # plot.plot_leader_robot(self)
+            else:
+                plt.plot(self.mpc_state[i][0], self.mpc_state[i][1], "og")
+                plt.plot(self.now_state[i][0], self.now_state[i][1], "-g")
+                plt.plot(self.goal_robot[i][0], self.goal_robot[i][1], "om")
+                # plot_follower_robot(self)
+
+        Plot.plot_obstacle(self)
+
+        # plt.axis("equal")
+        # plt.grid(True)
+        # plt.title("Time[s]:" + str(round(time, 2)))
+
+        # if save_simulation:
+            # plt.savefig('Q_' + str(imgct))
+        # plt.pause(0.0001)
+
 
 #################################################################################################### ########################### plot_car
 # Vehicle parameters
@@ -514,6 +537,7 @@ def main():
         time = t[-1] + dt
         t.append(time)
 
+        mpc_state = [mpc_state1, mpc_state2, mpc_state3]
         current_state = [current_state1, current_state2, current_state3]
         for i in range(robot_number):
             now_state[i].append(current_state[i])
@@ -525,16 +549,8 @@ def main():
             print("Reached Destination")
             # break
 
-        plt.cla()
-
-        plot1 = plot(mpc_state1, now_state[0], goal_robot[0], obstacle_state)
-        plot2 = plot(mpc_state2, now_state[1], goal_robot[1], obstacle_state)
-        plot3 = plot(mpc_state3, now_state[2], goal_robot[2], obstacle_state)
-
-        plot1.plot_leader_robot()
-        plot2.plot_follower_robot()
-        plot3.plot_follower_robot()
-        plot1.plot_obstacle()
+        plot = Plot(mpc_state, now_state, goal_robot, obstacle_state)
+        plot.plot_do()
 
         plt.axis("equal")
         plt.grid(True)
