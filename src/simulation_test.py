@@ -533,7 +533,6 @@ def main():
         plt.plot(mpc_x2, mpc_y2, "og", label="MPC2")
         plt.plot(mpc_x3, mpc_y3, "og", label="MPC3")
 
-
         plt.plot(x1, y1, "-r")
         plt.plot(x2, y2, "-g")
         plt.plot(x3, y3, "-g")
