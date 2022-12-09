@@ -15,13 +15,15 @@ import cubic_spline_planner
 import random
 from operator import add
 
-# get_obstacle = True
-get_obstacle = False
+get_obstacle = True
+# get_obstacle = False
 save_simulation = False
+
+robot_number = 3
 
 Nx = 4 #number of states
 Nu = 2 #number of control inputs
-dt = 0.1
+dt = 0.5
 DT = 0.2
 W_track = 1.5 #wheel track in metre
 W_base = 3.5 #wheel base in metre
@@ -45,22 +47,6 @@ W2 = np.array([2.0, 2.0, 0.5, 0.5])  # state error weightage
 W3 = np.array([0.01, 0.1])  # rate of input change weightage
 W4 = W2  # state error weightage
 
-#potential field
-start_x1 = 0.0  # start x position [m]
-start_y1 = 10.0  # start y position [m]
-goal_x1 = 30.0  # goal x position [m]
-goal_y1 = 10.0  # goal y position [m]
-
-start_x2 = -5.0  # start x position [m]
-start_y2 = 5.0  # start y position [m]
-goal_x2 = 40.0  # goal x position [m]
-goal_y2 = 40.0  # goal y position [m]
-
-start_x3 = -5.0  # start x position [m]
-start_y3 = 15.0  # start y position [m]
-goal_x3 = 50.0  # goal x position [m]
-goal_y3 = 50.0  # goal y position [m]
-
 grid_size = 0.2  # potential grid size [m]
 robot_radius = 5.0  # robot radius [m]
 NUM_OF_OBSTACLES = 12
@@ -74,13 +60,16 @@ class initial_param:
         self.goal_y = goal_y
 
     def start(self):
-        start_robot = np.array([self.start_x, self.start_y])
+        start_robot = []
+        for i in range(robot_number):
+            start_robot.append([self.start_x[i], self.start_y[i]])
         return start_robot
 
     def goal(self):
-        goal_robot = np.array([self.goal_x, self.goal_y])
+        goal_robot = []
+        for i in range(robot_number):
+            goal_robot.append([self.goal_x[i], self.goal_y[i]])
         return goal_robot
-#end
 
 #State : Set x, y, yaw, velocity of robots
 class State:
@@ -100,7 +89,6 @@ class State:
     def state_to_vec(self):
         state_vec = np.array([self.x, self.y, self.yaw, self.v])
         return state_vec
-#end
 
 #Path : robot path
 class Path:
@@ -209,7 +197,7 @@ class Path:
         return obstacle_state
 
 class Controller:
-    def __init__(self, path, goal, obstacle_state, mpc_acc, mpc_steer):
+    def __init__(self, path, goal, obstacle_state):
         self.path_x = path[0]
         self.path_y = path[1]
         self.path_yaw = path[2]
@@ -219,8 +207,9 @@ class Controller:
         self.obstacle_y = obstacle_state[1]
         self.obstacle_velocity_x = obstacle_state[2]
         self.obstacle_velocity_y = obstacle_state[3]
-        self.mpc_acc = mpc_acc
-        self.mpc_steer = mpc_steer
+
+        self.mpc_acc = np.zeros(H)
+        self.mpc_steer = np.zeros(H)
 
     def get_closest_point_on_path(self, cur_state_vec):
         diff_x = []
@@ -348,14 +337,17 @@ class Controller:
         mpc_x, mpc_y, mpc_acc, mpc_steer = Controller.run_MPC(self, cur_state_vec, traj_des)
 
         current_state.update_state(mpc_acc[0], mpc_steer[0])
+        cur_state_vec = current_state.state_to_vec()
 
-        return target_pt, mpc_x, mpc_y, mpc_acc, mpc_steer, current_state
+        mpc_state = np.array([mpc_x, mpc_y])
+
+        return target_pt, mpc_state, mpc_acc, mpc_steer, cur_state_vec
 
 class Check:
     def __init__(self, current_state, goal, target_pt, path):
-        self.path_x = current_state.x
-        self.path_y = current_state.y
-        self.velocity = current_state.v
+        self.path_x = current_state[0]
+        self.path_y = current_state[1]
+        self.velocity = current_state[3]
         self.goal_x = goal[0]
         self.goal_y = goal[1]
         self.target_pt = target_pt
@@ -384,6 +376,30 @@ class Check:
             return True
         else:
             return False
+
+class plot:
+    def __init__(self, mpc_state, now_state, goal, obstacle_state):
+        self.mpc_x = mpc_state[0]
+        self.mpc_y = mpc_state[1]
+        self.x = now_state[0]
+        self.y = now_state[1]
+        self.goal_x = goal[0]
+        self.goal_y = goal[1]
+        self.obstacle_x = obstacle_state[0]
+        self.obstacle_y = obstacle_state[1]
+
+    def plot_leader_robot(self):
+        plt.plot(self.mpc_x, self.mpc_y, "or")
+        plt.plot(self.x, self.y, "-r")
+        plt.plot(self.goal_x, self.goal_y, "om")
+
+    def plot_follower_robot(self):
+        plt.plot(self.mpc_x, self.mpc_y, "og")
+        plt.plot(self.x, self.y, "-g")
+        plt.plot(self.goal_x, self.goal_y, "om")
+
+    def plot_obstacle(self):
+        plt.plot(self.obstacle_x, self.obstacle_y, "ok")
 
 #################################################################################################### ########################### plot_car
 # Vehicle parameters
@@ -463,85 +479,62 @@ def main():
 
     initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
 
-    robot1 = initial_param(start_x1, start_y1, goal_x1, goal_y1)
-    robot2 = initial_param(start_x2, start_y2, goal_x2, goal_y2)
-    robot3 = initial_param(start_x3, start_y3, goal_x3, goal_y3)
+    start_x = [0.0, -5.0, -5.0]
+    start_y = [10.0, 5.0, 15.0]
+    goal_x = [30.0, 40.0, 50.0]
+    goal_y = [10.0, 40.0, 50.0]
 
-    start_robot1 = robot1.start()  #dimention = 1
-    start_robot2 = robot2.start()  #dimention = 1
-    start_robot3 = robot3.start()  #dimention = 1
-    goal_robot1 = robot1.goal()     #dimention = 1
-    # goal_robot2 = robot2.goal()     #dimention = 1
-    goal_robot2 = robot1.goal()     #dimention = 1
-    # goal_robot3 = robot3.goal()     #dimention = 1
-    goal_robot3 = robot1.goal()     #dimention = 1
+    robot = initial_param(start_x, start_y, goal_x, goal_y)
+    start_robot = robot.start()  #dimention = 1
+    goal_robot = robot.goal()     #dimention = 1
 
-    test1 = Path(start_robot1, goal_robot1, initial_obstacle_state)
-    test2 = Path(start_robot2, goal_robot2, initial_obstacle_state)
-    test3 = Path(start_robot3, goal_robot3, initial_obstacle_state)
+    test1 = Path(start_robot[0], goal_robot[0], initial_obstacle_state)
+    test2 = Path(start_robot[1], goal_robot[1], initial_obstacle_state)
+    test3 = Path(start_robot[2], goal_robot[2], initial_obstacle_state)
     path_robot1 = test1.potential_field_path()
     path_robot2 = test2.potential_field_path()
     path_robot3 = test3.potential_field_path()
     obstacle_state = test1.obstacle_path()
 
     t = [0]
-    x1 = [start_robot1[0]]
-    y1 = [start_robot1[1]]
-    x2 = [start_robot2[0]]
-    y2 = [start_robot2[1]]
-    x3 = [start_robot3[0]]
-    y3 = [start_robot3[1]]
-
-    mpc_acc1 = np.zeros(H)
-    mpc_acc2 = np.zeros(H)
-    mpc_acc3 = np.zeros(H)
-    mpc_steer1 = np.zeros(H)
-    mpc_steer2 = np.zeros(H)
-    mpc_steer3 = np.zeros(H)
+    now_state = [start_robot[0], start_robot[1], start_robot[2]]
 
     while t[-1] <= simulation_time_limit:
         # print(path_robot1[0][0])
 
         imgct += 1
 
-        control_robot1 = Controller(path_robot1, goal_robot1, obstacle_state, mpc_acc1, mpc_steer1)
-        control_robot2 = Controller(path_robot2, goal_robot2, obstacle_state, mpc_acc2, mpc_steer2)
-        control_robot3 = Controller(path_robot3, goal_robot3, obstacle_state, mpc_acc3, mpc_steer3)
-        target_pt1, mpc_x1, mpc_y1, mpc_acc1, mpc_steer1, current_state1 = control_robot1.run_controller()
-        target_pt2, mpc_x2, mpc_y2, mpc_acc2, mpc_steer2, current_state2 = control_robot2.run_controller()
-        target_pt3, mpc_x3, mpc_y3, mpc_acc3, mpc_steer3, current_state3 = control_robot3.run_controller()
+        control_robot1 = Controller(path_robot1, goal_robot[0], obstacle_state)
+        control_robot2 = Controller(path_robot2, goal_robot[1], obstacle_state)
+        control_robot3 = Controller(path_robot3, goal_robot[2], obstacle_state)
+        target_pt1, mpc_state1, mpc_acc1, mpc_steer1, current_state1 = control_robot1.run_controller()
+        target_pt2, mpc_state2, mpc_acc2, mpc_steer2, current_state2 = control_robot2.run_controller()
+        target_pt3, mpc_state3, mpc_acc3, mpc_steer3, current_state3 = control_robot3.run_controller()
 
         time = t[-1] + dt
         t.append(time)
-        x1.append(current_state1.x)
-        y1.append(current_state1.y)
-        x2.append(current_state2.x)
-        y2.append(current_state2.y)
-        x3.append(current_state3.x)
-        y3.append(current_state3.y)
 
-        check1 = Check(current_state1, goal_robot1, target_pt1, path_robot1)
-        check2 = Check(current_state2, goal_robot2, target_pt2, path_robot2)
-        check3 = Check(current_state3, goal_robot3, target_pt3, path_robot3)
+        current_state = [current_state1, current_state2, current_state3]
+        for i in range(robot_number):
+            now_state[i].append(current_state[i])
+
+        check1 = Check(current_state1, goal_robot[0], target_pt1, path_robot1)
+        check2 = Check(current_state2, goal_robot[1], target_pt2, path_robot2)
+        check3 = Check(current_state3, goal_robot[2], target_pt3, path_robot3)
         if check1.destination_check() and check2.destination_check() and check3.destination_check():
             print("Reached Destination")
             # break
 
         plt.cla()
 
-        plt.plot(mpc_x1, mpc_y1, "or", label="MPC1")
-        plt.plot(mpc_x2, mpc_y2, "og", label="MPC2")
-        plt.plot(mpc_x3, mpc_y3, "og", label="MPC3")
+        plot1 = plot(mpc_state1, now_state[0], goal_robot[0], obstacle_state)
+        plot2 = plot(mpc_state2, now_state[1], goal_robot[1], obstacle_state)
+        plot3 = plot(mpc_state3, now_state[2], goal_robot[2], obstacle_state)
 
-        plt.plot(x1, y1, "-r")
-        plt.plot(x2, y2, "-g")
-        plt.plot(x3, y3, "-g")
-
-        plt.plot(control_robot1.goal_x, control_robot1.goal_y, "om")
-        plt.plot(control_robot2.goal_x, control_robot2.goal_y, "om")
-        plt.plot(control_robot3.goal_x, control_robot3.goal_y, "om")
-
-        plt.plot(control_robot1.obstacle_x, control_robot1.obstacle_y, "ok")
+        plot1.plot_leader_robot()
+        plot2.plot_follower_robot()
+        plot3.plot_follower_robot()
+        plot1.plot_obstacle()
 
         plt.axis("equal")
         plt.grid(True)
@@ -551,13 +544,13 @@ def main():
             plt.savefig('Q_' + str(imgct))
         plt.pause(0.0001)
 
-        new_state1 = np.array([current_state1.x, current_state1.y])
-        new_state2 = np.array([current_state2.x, current_state2.y])
-        new_state3 = np.array([current_state3.x, current_state3.y])
+        new_state1 = np.array([current_state1[0], current_state1[1]])
+        new_state2 = np.array([current_state2[0], current_state2[1]])
+        new_state3 = np.array([current_state3[0], current_state3[1]])
 
-        new1 = Path(new_state1, goal_robot1, obstacle_state)
-        new2 = Path(new_state2, goal_robot2, obstacle_state)
-        new3 = Path(new_state3, goal_robot3, obstacle_state)
+        new1 = Path(new_state1, goal_robot[0], obstacle_state)
+        new2 = Path(new_state2, goal_robot[1], obstacle_state)
+        new3 = Path(new_state3, goal_robot[2], obstacle_state)
 
         obstacle_state = new1.obstacle_path()
 
@@ -570,8 +563,8 @@ def main():
         if path_planning3:
             path_robot3 = new3.potential_field_path()
 
-        robot_distance12 = np.hypot(current_state1.x - current_state2.x, current_state1.y - current_state2.y)
-        robot_distance13 = np.hypot(current_state1.x - current_state3.x, current_state1.y - current_state3.y)
+        robot_distance12 = np.hypot(current_state1[0] - current_state2[0], current_state1[1] - current_state2[1])
+        robot_distance13 = np.hypot(current_state1[0] - current_state3[0], current_state1[1] - current_state3[1])
 
         if robot_distance12 >= accept_robot_distance:
             path_planning1 = False
@@ -600,8 +593,8 @@ def main():
             print('Finish!')
             # break
 
-        goal_robot2 = np.array([path_robot1[0][0] - 3, path_robot1[1][0] - 3])
-        goal_robot3 = np.array([path_robot1[0][0] - 3, path_robot1[1][0] + 3])
+        goal_robot[1] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] - 3])
+        goal_robot[2] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] + 3])
 
 if __name__ == '__main__':
     main()
