@@ -385,10 +385,10 @@ class Plot:
         self.obstacle_x = obstacle_state[0]
         self.obstacle_y = obstacle_state[1]
 
-    # def plot_leader_robot(self):
-        # plt.plot(self.mpc_x, self.mpc_y, "or")
-        # plt.plot(self.x, self.y, "-r")
-        # plt.plot(self.goal_x, self.goal_y, "om")
+    def plot_leader_robot(self):
+        plt.plot(self.mpc_state[0][0], self.mpc_state[0][1], "or")
+        plt.plot(self.now_state[0][0], self.now_state[0][1], "-r")
+        plt.plot(self.goal_robot[0][0], self.goal_robot[0][1], "om")
 
     # def plot_follower_robot(self):
         # plt.plot(self.mpc_x, self.mpc_y, "og")
@@ -403,10 +403,7 @@ class Plot:
 
         for i in range(robot_number):
             if i == 0:
-                plt.plot(self.mpc_state[i][0], self.mpc_state[i][1], "or")
-                plt.plot(self.now_state[i][0], self.now_state[i][1], "-r")
-                plt.plot(self.goal_robot[i][0], self.goal_robot[i][1], "om")
-                # plot.plot_leader_robot(self)
+                Plot.plot_leader_robot(self)
             else:
                 plt.plot(self.mpc_state[i][0], self.mpc_state[i][1], "og")
                 plt.plot(self.now_state[i][0], self.now_state[i][1], "-g")
@@ -462,13 +459,17 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-y", truckcolor="-k"):  # pragma: n
 
 def initialize_obstacles(NUM_OF_OBSTACLES):
     if get_obstacle:
-        ox = [8, 9, 10, 11, 12, 13, 14, 15]
+        ox = [8, 9, 10, 11, 12, 13]
+        # , 14, 15]
                 # , 16, 17, 18, 19, 20, 21, 22, 23]
-        oy = [6, 5, 4, 3, 2, 1, 0, -1]
+        oy = [6, 5, 4, 3, 2, 1]
+        # , 0, -1]
                 # , -2, -3, -4, -5, -6, -7, -8, -9]
-        velX = [-0.05, -0.05, -0.05, -0.05, -0.05, -0.05, -0.05, -0.05]
+        velX = [-0.05, -0.05, -0.05, -0.05, -0.05, -0.05]
+        # , -0.05, -0.05]
                 # , -0.02, -0.02, -0.02, -0.02, -0.02, -0.02, -0.02, -0.02]
-        velY = [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+        velY = [0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+        # , 0.05, 0.05]
                 # , 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02]
         # ox = [0]
         # oy = [0]
@@ -595,18 +596,18 @@ def main():
 
         if check1.stop_planning():
             path_planning1 = False
-            stop1 = True
+            # stop1 = True
 
         if check2.stop_planning():
             path_planning2 = False
-            stop2 = True
+            # stop2 = True
 
         if check3.stop_planning():
             path_planning3 = False
-            stop3 = True
+            # stop3 = True
 
-        if stop1 and stop2 and stop3:
-            print('Finish!')
+        # if stop1 and stop2 and stop3:
+            # print('Finish!')
             # break
 
         goal_robot[1] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] - 3])
