@@ -93,22 +93,21 @@ class State:
 #Path : robot path
 class Path:
     def __init__(self, current, goal, obstacle_state):
-        self.current_x = current[0]
-        self.current_y = current[1]
-        self.goal_x = goal[0]
-        self.goal_y = goal[1]
+        self.current = current
+        self.goal = goal
         self.obstacle_x = obstacle_state[0]
         self.obstacle_y = obstacle_state[1]
         self.obstacle_velocity_x = obstacle_state[2]
         self.obstacle_velocity_y = obstacle_state[3]
+        # self.path_planning = path_planning
 
         self.KP = 15
         self.ETA = 100
 
-    def calc_attractive_potential(self, predictX, predictY):
-        return 0.5 * self.KP * np.hypot(predictX - self.goal_x, predictY - self.goal_y)
+    def calc_goal_potential(self, predictX, predictY, count):
+        return 0.5 * self.KP * np.hypot(predictX - self.goal[count][0], predictY - self.goal[count][1])
 
-    def calc_repulsive_potential(self, predictX, predictY):
+    def calc_obstacle_avoidance_potential(self, predictX, predictY):
         obs = len(self.obstacle_x)
         pot = 0
 
@@ -126,22 +125,22 @@ class Path:
 
         return motion
 
-    def potential_field_planning(self):
+    def potential_field_planning(self, count):
         mot = Path.get_motion_model(self)
         predictX = []
         predictY = []
 
         for i in range(len(mot)):
-            predictX.append(self.current_x + mot[i][0] * grid_size)
-            predictY.append(self.current_y + mot[i][1] * grid_size)
+            predictX.append(self.current[count][0] + mot[i][0] * grid_size)
+            predictY.append(self.current[count][1] + mot[i][1] * grid_size)
 
         gnet = []
         min_gnet = 0
         min_gnet_pos = 0
 
         for i in range(len(mot)):
-            ga = Path.calc_attractive_potential(self, predictX[i], predictY[i])
-            gr = Path.calc_repulsive_potential(self, predictX[i], predictY[i])
+            ga = Path.calc_goal_potential(self, predictX[i], predictY[i], count)
+            gr = Path.calc_obstacle_avoidance_potential(self, predictX[i], predictY[i])
             gnet.append(ga + gr)
 
             if(i==0):
@@ -163,25 +162,27 @@ class Path:
         return cx, cy, cyaw
 
     def potential_field_path(self):
-        iter = 0
-        path_x = np.array([])
-        path_y = np.array([])
-
+        path = []
         # while iter <= H + 5:
-        while iter <= H:
-            [step_x, step_y] = Path.potential_field_planning(self)
+        for i in range(robot_number):
+            path_x = []
+            path_y = []
+            iter = 0
 
-            self.current_x = self.current_x + step_x
-            self.current_y = self.current_y + step_y
+            while iter <= H:
+                [step_x, step_y] = Path.potential_field_planning(self, i)
 
-            path_x = np.append(path_x, self.current_x)
-            path_y = np.append(path_y, self.current_y)
+                self.current[i][0] = self.current[i][0] + step_x
+                self.current[i][1] = self.current[i][1] + step_y
 
-            iter += 1
+                path_x.append(self.current[i][0])
+                path_y.append(self.current[i][1])
 
-        path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
+                iter += 1
 
-        path = np.array([path_x, path_y, path_yaw])
+            path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
+            path.append([path_x, path_y, path_yaw])
+
         return path
 
     def obstacle_path(self):
@@ -388,7 +389,7 @@ class Plot:
     def plot_leader_robot(self):
         plt.plot(self.mpc_state[0][0], self.mpc_state[0][1], "or")
         plt.plot(self.now_state[0][0], self.now_state[0][1], "-r")
-        plt.plot(self.goal_robot[0][0], self.goal_robot[0][1], "om")
+        plt.plot(self.goal_robot[0][0], self.goal_robot[0][1], "xm")
 
     # def plot_follower_robot(self):
         # plt.plot(self.mpc_x, self.mpc_y, "og")
@@ -407,7 +408,7 @@ class Plot:
             else:
                 plt.plot(self.mpc_state[i][0], self.mpc_state[i][1], "og")
                 plt.plot(self.now_state[i][0], self.now_state[i][1], "-g")
-                plt.plot(self.goal_robot[i][0], self.goal_robot[i][1], "om")
+                plt.plot(self.goal_robot[i][0], self.goal_robot[i][1], "xm")
                 # plot_follower_robot(self)
 
         Plot.plot_obstacle(self)
@@ -503,7 +504,7 @@ def main():
 
     initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
 
-    start_x = [0.0, -5.0, -5.0]
+    start_x = [0.0, -5.0, -10.0]
     start_y = [10.0, 5.0, 15.0]
     goal_x = [30.0, 40.0, 50.0]
     goal_y = [10.0, 40.0, 50.0]
@@ -512,13 +513,9 @@ def main():
     start_robot = robot.start()  #dimention = 1
     goal_robot = robot.goal()     #dimention = 1
 
-    test1 = Path(start_robot[0], goal_robot[0], initial_obstacle_state)
-    test2 = Path(start_robot[1], goal_robot[1], initial_obstacle_state)
-    test3 = Path(start_robot[2], goal_robot[2], initial_obstacle_state)
-    path_robot1 = test1.potential_field_path()
-    path_robot2 = test2.potential_field_path()
-    path_robot3 = test3.potential_field_path()
-    obstacle_state = test1.obstacle_path()
+    test = Path(start_robot, goal_robot, initial_obstacle_state)
+    path_robot = test.potential_field_path()
+    obstacle_state = test.obstacle_path()
 
     t = [0]
     now_state = [start_robot[0], start_robot[1], start_robot[2]]
@@ -528,9 +525,9 @@ def main():
 
         imgct += 1
 
-        control_robot1 = Controller(path_robot1, goal_robot[0], obstacle_state)
-        control_robot2 = Controller(path_robot2, goal_robot[1], obstacle_state)
-        control_robot3 = Controller(path_robot3, goal_robot[2], obstacle_state)
+        control_robot1 = Controller(path_robot[0], goal_robot[0], obstacle_state)
+        control_robot2 = Controller(path_robot[1], goal_robot[1], obstacle_state)
+        control_robot3 = Controller(path_robot[2], goal_robot[2], obstacle_state)
         target_pt1, mpc_state1, mpc_acc1, mpc_steer1, current_state1 = control_robot1.run_controller()
         target_pt2, mpc_state2, mpc_acc2, mpc_steer2, current_state2 = control_robot2.run_controller()
         target_pt3, mpc_state3, mpc_acc3, mpc_steer3, current_state3 = control_robot3.run_controller()
@@ -543,11 +540,11 @@ def main():
         for i in range(robot_number):
             now_state[i].append(current_state[i])
 
-        check1 = Check(current_state1, goal_robot[0], target_pt1, path_robot1)
-        check2 = Check(current_state2, goal_robot[1], target_pt2, path_robot2)
-        check3 = Check(current_state3, goal_robot[2], target_pt3, path_robot3)
+        check1 = Check(current_state1, goal_robot[0], target_pt1, path_robot[0])
+        check2 = Check(current_state2, goal_robot[1], target_pt2, path_robot[1])
+        check3 = Check(current_state3, goal_robot[2], target_pt3, path_robot[2])
         if check1.destination_check() and check2.destination_check() and check3.destination_check():
-            print("Reached Destination")
+            print("Goal!!!")
             # break
 
         plot = Plot(mpc_state, now_state, goal_robot, obstacle_state)
@@ -561,57 +558,60 @@ def main():
             plt.savefig('Q_' + str(imgct))
         plt.pause(0.0001)
 
-        new_state1 = np.array([current_state1[0], current_state1[1]])
-        new_state2 = np.array([current_state2[0], current_state2[1]])
-        new_state3 = np.array([current_state3[0], current_state3[1]])
+        new_state = np.array([[current_state1[0], current_state1[1]], [current_state2[0], current_state2[1]], [current_state3[0], current_state3[1]]])
 
-        new1 = Path(new_state1, goal_robot[0], obstacle_state)
-        new2 = Path(new_state2, goal_robot[1], obstacle_state)
-        new3 = Path(new_state3, goal_robot[2], obstacle_state)
+        new = Path(new_state, goal_robot, obstacle_state)
+        path_robot = new.potential_field_path()
+        obstacle_state = new.obstacle_path()
 
-        obstacle_state = new1.obstacle_path()
+        # if path_planning1:
+            # path_robot1 = new1.potential_field_path()
 
-        if path_planning1:
-            path_robot1 = new1.potential_field_path()
+        # if path_planning2:
+            # path_robot2 = new2.potential_field_path()
 
-        if path_planning2:
-            path_robot2 = new2.potential_field_path()
+        # if path_planning3:
+            # path_robot3 = new3.potential_field_path()
 
-        if path_planning3:
-            path_robot3 = new3.potential_field_path()
+        # robot_distance12 = np.hypot(current_state1[0] - current_state2[0], current_state1[1] - current_state2[1])
+        # robot_distance13 = np.hypot(current_state1[0] - current_state3[0], current_state1[1] - current_state3[1])
+        # robot_distance23 = np.hypot(current_state2[0] - current_state3[0], current_state2[1] - current_state3[1])
 
-        robot_distance12 = np.hypot(current_state1[0] - current_state2[0], current_state1[1] - current_state2[1])
-        robot_distance13 = np.hypot(current_state1[0] - current_state3[0], current_state1[1] - current_state3[1])
+        # if robot_distance12 >= accept_robot_distance:
+            # path_planning1 = False
+            # path_planning3 = False
+        # elif robot_distance13 >= accept_robot_distance:
+            # path_planning1 = False
+            # path_planning2 = False
+        # elif robot_distance23 >= accept_robot_distance:
+            # path_planning1 = False
+            # path_planning2 = False
+        # else:
+            # path_planning1 = True
+            # path_planning2 = True
+            # path_planning3 = True
 
-        if robot_distance12 >= accept_robot_distance:
-            path_planning1 = False
-            path_planning3 = False
-        elif robot_distance13 >= accept_robot_distance:
-            path_planning1 = False
-            path_planning2 = False
-        else:
-            path_planning1 = True
-            path_planning2 = True
-            path_planning3 = True
-
-        if check1.stop_planning():
-            path_planning1 = False
+        # if check1.stop_planning():
+            # path_planning1 = False
             # stop1 = True
 
-        if check2.stop_planning():
-            path_planning2 = False
+        # if check2.stop_planning():
+            # path_planning2 = False
             # stop2 = True
 
-        if check3.stop_planning():
-            path_planning3 = False
+        # if check3.stop_planning():
+            # path_planning3 = False
             # stop3 = True
 
         # if stop1 and stop2 and stop3:
             # print('Finish!')
             # break
 
-        goal_robot[1] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] - 3])
-        goal_robot[2] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] + 3])
+        # goal_robot[1] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] - 3])
+        goal_robot[1] = np.array([path_robot[0][0][0] - 3, path_robot[0][1][0]])
+        # goal_robot[2] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] + 3])
+        goal_robot[2] = np.array([path_robot[1][0][0] - 3, path_robot[1][1][0]])
+
 
 if __name__ == '__main__':
     main()
