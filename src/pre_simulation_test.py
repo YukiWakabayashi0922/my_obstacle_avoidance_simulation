@@ -33,7 +33,7 @@ H = 5 # Horizon length
 simulation_time_limit = 100 #seconds
 accept_dist = 0.5 #acceptable destination distance
 accept_stop_v = 0.08 #acceptable stopping velocity
-accept_robot_distance = 8.0
+accept_robot_distance = 10.0
 
 desired_speed = 0.1           # m/s
 max_speed = 1              # m/s
@@ -60,15 +60,11 @@ class initial_param:
         self.goal_y = goal_y
 
     def start(self):
-        start_robot = []
-        for i in range(robot_number):
-            start_robot.append([self.start_x[i], self.start_y[i]])
+        start_robot = [self.start_x, self.start_y]
         return start_robot
 
     def goal(self):
-        goal_robot = []
-        for i in range(robot_number):
-            goal_robot.append([self.goal_x[i], self.goal_y[i]])
+        goal_robot = [self.goal_x, self.goal_y]
         return goal_robot
 
 #State : Set x, y, yaw, velocity of robots
@@ -120,8 +116,8 @@ class Path:
     def get_motion_model(self):
         motion = []
         num = 360
-        for i in range(num*2):
-            deg = 2*i*np.pi/num
+        for i in range(num):
+            deg = i*np.pi/num
             motion.append([np.cos(deg),np.sin(deg)])
 
         return motion
@@ -503,10 +499,10 @@ def main():
 
     initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
 
-    start_x = [0.0, -5.0, -10.0]
-    start_y = [10.0, 5.0, 15.0]
-    goal_x = [30.0, 40.0, 50.0]
-    goal_y = [10.0, 40.0, 50.0]
+    start_x = [0.0, -4.0, -4.0]
+    start_y = [10.0, 8.0, 12.0]
+    goal_x = [30.0, 30.0, 30.0]
+    goal_y = [10.0, 10.0, 10.0]
 
     robot = initial_param(start_x, start_y, goal_x, goal_y)
     start_robot = robot.start()  #dimention = 1
@@ -581,18 +577,18 @@ def main():
             path_robot3 = new3.potential_field_path()
 
         robot_distance12 = np.hypot(current_state1[0] - current_state2[0], current_state1[1] - current_state2[1])
-        # robot_distance13 = np.hypot(current_state1[0] - current_state3[0], current_state1[1] - current_state3[1])
-        robot_distance23 = np.hypot(current_state2[0] - current_state3[0], current_state2[1] - current_state3[1])
+        robot_distance13 = np.hypot(current_state1[0] - current_state3[0], current_state1[1] - current_state3[1])
+        # robot_distance23 = np.hypot(current_state2[0] - current_state3[0], current_state2[1] - current_state3[1])
 
         if robot_distance12 >= accept_robot_distance:
             path_planning1 = False
             path_planning3 = False
-        # elif robot_distance13 >= accept_robot_distance:
-            # path_planning1 = False
-            # path_planning2 = False
-        elif robot_distance23 >= accept_robot_distance:
+        elif robot_distance13 >= accept_robot_distance:
             path_planning1 = False
             path_planning2 = False
+        # elif robot_distance23 >= accept_robot_distance:
+            # path_planning1 = False
+            # path_planning2 = False
         else:
             path_planning1 = True
             path_planning2 = True
@@ -614,10 +610,10 @@ def main():
             # print('Finish!')
             # break
 
-        # goal_robot[1] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] - 3])
-        goal_robot[1] = np.array([path_robot1[0][0] - 3, path_robot1[1][0]])
-        # goal_robot[2] = np.array([path_robot1[0][0] - 3, path_robot1[1][0] + 3])
-        goal_robot[2] = np.array([path_robot2[0][0] - 3, path_robot2[1][0]])
+        goal_robot[1] = np.array([current_state1[0] - 5 * np.cos(np.pi/6), current_state1[1] - 5 * np.sin(np.pi/6)])
+        # goal_robot[1] = np.array([path_robot1[0][0] - 3, path_robot1[1][0]])
+        goal_robot[2] = np.array([current_state1[0] - 5 * np.cos(np.pi/6), current_state1[1] + 5 * np.sin(np.pi/6)])
+        # goal_robot[2] = np.array([path_robot2[0][0] - 3, path_robot2[1][0]])
 
 
 if __name__ == '__main__':
