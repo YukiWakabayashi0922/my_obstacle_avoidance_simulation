@@ -92,21 +92,31 @@ class State:
 
 #Path : robot path
 class Path:
-    def __init__(self, current, goal, obstacle_state, path_planning):
-        self.current = current
-        self.goal = goal
-        self.obstacle_x = obstacle_state[0]
-        self.obstacle_y = obstacle_state[1]
-        self.obstacle_velocity_x = obstacle_state[2]
-        self.obstacle_velocity_y = obstacle_state[3]
+    def __init__(self, all_current_state, all_goal, obstacle_state, path_planning):
+        self.all_current_state = all_current_state    #[[x, y], [x, y], [x, y]]
+        self.all_goal = all_goal                      #[[x, y], [x, y], [x, y]]
+        self.obstacle_x = obstacle_state[0]           #[x]
+        self.obstacle_y = obstacle_state[1]           #[y]
+        self.obstacle_velocity_x = obstacle_state[2]  #[Vx]
+        self.obstacle_velocity_y = obstacle_state[3]  #[Vy]
         self.path_planning = path_planning
 
         self.KP = 30
         self.ETA = 100
         self.FP = 100
 
-    def calc_goal_potential(self, predictX, predictY, count):
-        return 0.5 * self.KP * np.hypot(predictX - self.goal[count][0], predictY - self.goal[count][1])
+    def individual_current_state(self, current_number):
+        current_state = []
+        current_state = self.all_current_state[current_number]
+        return current_state
+
+    def individual_goal(self, current_number):
+        goal = []
+        goal = self.all_goal[current_number]
+        return goal
+
+    def calc_goal_potential(self, predictX, predictY, goal):
+        return 0.5 * self.KP * np.hypot(predictX - goal[0], predictY - goal[1])
 
     def calc_obstacle_avoidance_potential(self, predictX, predictY):
         obs = len(self.obstacle_x)
@@ -117,8 +127,8 @@ class Path:
 
         return pot
 
-    def calc_formation_potential(self, predictX, predictY, count):
-        return 0.5 * self.FP * np.exp(-np.hypot(predictX - self.current[count + 1][0], predictY - self.current[count + 1][1]))
+    # def calc_formation_potential(self, predictX, predictY, count):
+        # return 0.5 * self.FP * np.exp(-np.hypot(predictX - self.current[count + 1][0], predictY - self.current[count + 1][1]))
 
     def get_motion_model(self):
         motion = []
@@ -129,38 +139,27 @@ class Path:
 
         return motion
 
-    def potential_field_planning(self, count):
+    def get_spline_path(self, path_x, path_y):
+        x, y, yaw, k, s = cubic_spline_planner.calc_spline_course(path_x, path_y, 1)
+        return x, y, yaw
+
+    def leader_planning(self, current_state, goal):
         motion = Path.get_motion_model(self)
         predictX = []
         predictY = []
 
-        for i in range(len(mot)):
-            predictX.append(self.current[0] + motion[i][0] * grid_size)
-            predictY.append(self.current[1] + motion[i][1] * grid_size)
+        for i in range(len(motion)):
+            predictX.append(current_state[0] + motion[i][0] * grid_size)
+            predictY.append(current_state[1] + motion[i][1] * grid_size)
 
         gnet = []
         min_gnet = 0
         min_gnet_pos = 0
 
-        for i in range(len(mot)):
-            if count != 2:
-                n = np.hypot(predictX[i] - self.current[count + 1][0], predictY[i] - self.current[count + 1][1])
-
-                if n >= 10:
-                    gg = Path.calc_goal_potential(self, predictX[i], predictY[i], count)
-                    go = Path.calc_obstacle_avoidance_potential(self, predictX[i], predictY[i])
-                    gf = Path.calc_formation_potential(self, predictX[i], predictY[i], count)
-                    gnet.append(gg + go + gf)
-
-                    print(n, "formation mode")
-                else:
-                    gg = Path.calc_goal_potential(self, predictX[i], predictY[i], count)
-                    go = Path.calc_obstacle_avoidance_potential(self, predictX[i], predictY[i])
-                    gnet.append(gg + go)
-            else:
-                gg = Path.calc_goal_potential(self, predictX[i], predictY[i], count)
-                go = Path.calc_obstacle_avoidance_potential(self, predictX[i], predictY[i])
-                gnet.append(gg + go)
+        for i in range(len(motion)):
+            gg = Path.calc_goal_potential(self, predictX[i], predictY[i], goal)
+            go = Path.calc_obstacle_avoidance_potential(self, predictX[i], predictY[i])
+            gnet.append(gg + go)
 
             if(i==0):
                 min_gnet = gnet[i]
@@ -170,87 +169,177 @@ class Path:
                     min_gnet = gnet[i]
                     min_gnet_pos = i
 
-        step_x = mot[min_gnet_pos][0] / 1.5
-        step_y = mot[min_gnet_pos][1] / 1.5
+        step_x = motion[min_gnet_pos][0] / 1.5
+        step_y = motion[min_gnet_pos][1] / 1.5
 
-        # print("[step_x, step_y] : [{}, {}]" .format(step_x, step_y))
-        return [step_x,step_y]
+        step = [step_x, step_y]
+        return step
 
-    def get_spline_path(self, path_x, path_y):
-        cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(path_x, path_y, 1)
-        return cx, cy, cyaw
+    def middle_follower_planning(self, current_state, goal):
+        motion = Path.get_motion_model(self)
+        predictX = []
+        predictY = []
 
-    def leader_potential_field_path(self):
-        path = []
-        # while iter <= H + 5:
-        for i in range(robot_number):
-            path_x = []
-            path_y = []
-            iter = 0
-            if self.path_planning[i] == True:
-                while iter <= H:
-                    [step_x, step_y] = Path.potential_field_planning(self, i)
+        for i in range(len(motion)):
+            predictX.append(current_state[0] + motion[i][0] * grid_size)
+            predictY.append(current_state[1] + motion[i][1] * grid_size)
 
-                    self.current[i][0] = self.current[i][0] + step_x
-                    self.current[i][1] = self.current[i][1] + step_y
+        gnet = []
+        min_gnet = 0
+        min_gnet_pos = 0
 
-                    path_x.append(self.current[i][0])
-                    path_y.append(self.current[i][1])
+        for i in range(len(motion)):
+            gg = Path.calc_goal_potential(self, predictX[i], predictY[i], goal)
+            go = Path.calc_obstacle_avoidance_potential(self, predictX[i], predictY[i])
+            gnet.append(gg + go)
 
-                    iter += 1
-
-                path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
-                path.append([path_x, path_y, path_yaw])
-
+            if(i==0):
+                min_gnet = gnet[i]
+                min_gnet_pos = i
             else:
-                path_yaw = []
-                while iter <= H:
-                    path_x.append(self.current[i][0])
-                    path_y.append(self.current[i][1])
-                    path_yaw.append(0)
+                if(min_gnet > gnet[i]):
+                    min_gnet = gnet[i]
+                    min_gnet_pos = i
 
-                    iter += 1
+        step_x = motion[min_gnet_pos][0] / 1.5
+        step_y = motion[min_gnet_pos][1] / 1.5
 
-                # path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
-                path.append([path_x, path_y, path_yaw])
+        step = [step_x, step_y]
+        return step
 
-        return path
+    def last_follower_planning(self, current_state, goal):
+        motion = Path.get_motion_model(self)
+        predictX = []
+        predictY = []
 
-    def follower_potential_field_path(self):
-        path = []
-        # while iter <= H + 5:
-        for i in range(robot_number):
-            path_x = []
-            path_y = []
-            iter = 0
-            if self.path_planning[i] == True:
-                while iter <= H:
-                    [step_x, step_y] = Path.potential_field_planning(self, i)
+        for i in range(len(motion)):
+            predictX.append(current_state[0] + motion[i][0] * grid_size)
+            predictY.append(current_state[1] + motion[i][1] * grid_size)
 
-                    self.current[i][0] = self.current[i][0] + step_x
-                    self.current[i][1] = self.current[i][1] + step_y
+        gnet = []
+        min_gnet = 0
+        min_gnet_pos = 0
 
-                    path_x.append(self.current[i][0])
-                    path_y.append(self.current[i][1])
+        for i in range(len(motion)):
+            gg = Path.calc_goal_potential(self, predictX[i], predictY[i], goal)
+            go = Path.calc_obstacle_avoidance_potential(self, predictX[i], predictY[i])
+            gnet.append(gg + go)
 
-                    iter += 1
-
-                path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
-                path.append([path_x, path_y, path_yaw])
-
+            if(i==0):
+                min_gnet = gnet[i]
+                min_gnet_pos = i
             else:
-                path_yaw = []
-                while iter <= H:
-                    path_x.append(self.current[i][0])
-                    path_y.append(self.current[i][1])
-                    path_yaw.append(0)
+                if(min_gnet > gnet[i]):
+                    min_gnet = gnet[i]
+                    min_gnet_pos = i
 
-                    iter += 1
+        step_x = motion[min_gnet_pos][0] / 1.5
+        step_y = motion[min_gnet_pos][1] / 1.5
 
-                # path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
-                path.append([path_x, path_y, path_yaw])
+        step = [step_x, step_y]
+        return step
 
-        return path
+    def leader_path(self, current_state, goal, current_number):
+        leader_path = []
+        path_x = []
+        path_y = []
+        iter = 0
+
+        if self.path_planning[current_number] == True:
+            while iter <= H:
+                step = Path.leader_planning(self, current_state, goal)
+
+                current_state[0] = current_state[0] + step[0]
+                current_state[1] = current_state[1] + step[1]
+
+                path_x.append(current_state[0])
+                path_y.append(current_state[1])
+
+                iter += 1
+
+            path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
+            leader_path.append([path_x, path_y, path_yaw])
+
+        else:
+            path_yaw = []
+            while iter <= H:
+                path_x.append(current_state[0])
+                path_y.append(current_state[1])
+                path_yaw.append(0)
+
+                iter += 1
+
+            leader_path.append([path_x, path_y, path_yaw])
+
+        return leader_path
+
+    def middle_follower_path(self, current_state, goal, current_number):
+        middle_follower_path = []
+        path_x = []
+        path_y = []
+        iter = 0
+
+        if self.path_planning[current_number] == True:
+            while iter <= H:
+                step = Path.middle_follower_planning(self, current_state, goal)
+
+                current_state[0] = current_state[0] + step[0]
+                current_state[1] = current_state[1] + step[1]
+
+                path_x.append(current_state[0])
+                path_y.append(current_state[1])
+
+                iter += 1
+
+            path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
+            middle_follower_path.append([path_x, path_y, path_yaw])
+
+        else:
+            path_yaw = []
+            while iter <= H:
+                path_x.append(current_state[0])
+                path_y.append(current_state[1])
+                path_yaw.append(0)
+
+                iter += 1
+
+            middle_follower_path.append([path_x, path_y, path_yaw])
+
+        return middle_follower_path
+
+    def last_follower_path(self, current_state, goal, current_number):
+        last_follower_path = []
+        path_x = []
+        path_y = []
+        iter = 0
+
+        if self.path_planning[current_number] == True:
+            while iter <= H:
+                step = Path.last_follower_planning(self, current_state, goal)
+
+                current_state[0] = current_state[0] + step[0]
+                current_state[1] = current_state[1] + step[1]
+
+                path_x.append(current_state[0])
+                path_y.append(current_state[1])
+
+                iter += 1
+
+            path_x, path_y, path_yaw = Path.get_spline_path(self, path_x, path_y)
+            last_follower_path.append([path_x, path_y, path_yaw])
+
+        else:
+            path_yaw = []
+            while iter <= H:
+                path_x.append(current_state[0])
+                path_y.append(current_state[1])
+                path_yaw.append(0)
+
+                iter += 1
+
+            last_follower_path.append([path_x, path_y, path_yaw])
+
+        return last_follower_path
 
     def obstacle_path(self):
         iter = 0
@@ -261,8 +350,39 @@ class Path:
 
             iter += 1
 
-        obstacle_state = np.array([self.obstacle_x, self.obstacle_y, self.obstacle_velocity_x, self.obstacle_velocity_y])
-        return obstacle_state
+        obstacle_path = np.array([self.obstacle_x, self.obstacle_y, self.obstacle_velocity_x, self.obstacle_velocity_y])
+        return obstacle_path
+
+    def path_do(self):
+        current_state = []
+        goal = []
+        path = []
+        leader_path = []
+        middle_follower_path = []
+        last_follower_path = []
+
+        for i in range(robot_number):
+            current_state = Path.individual_current_state(self, i)
+            goal = Path.individual_goal(self, i)
+
+            if i == 0:
+                leader_path = Path.leader_path(self, current_state, goal, i)
+                path.append(leader_path)
+
+            elif i == robot_number - 1:
+                last_follower_path = Path.last_follower_path(self, current_state, goal, i)
+                path.append(last_follower_path)
+
+            else:
+                middle_follower_path = Path.middle_follower_path(self, current_state, goal, i)
+                path.append(middle_follower_path)
+
+            current_state = []
+            goal = []
+
+        obstacle_path = Path.obstacle_path(self)
+
+        return path, obstacle_path
 
 class Controller:
     def __init__(self, path, goal, obstacle_state):
@@ -558,9 +678,6 @@ def initialize_obstacles(NUM_OF_OBSTACLES):
 def main():
     imgct = 0
     path_planning = [True, True, True]
-    # path_planning1 = True
-    # path_planning2 = True
-    # path_planning3 = True
 
     initial_obstacle_state = initialize_obstacles(NUM_OF_OBSTACLES)  #dimention = 2
 
@@ -573,10 +690,8 @@ def main():
     start_robot = robot.start()  #dimention = 1
     goal_robot = robot.goal()     #dimention = 1
 
-    # test = Path(start_robot, goal_robot, initial_obstacle_state)
     test = Path(start_robot, goal_robot, initial_obstacle_state, path_planning)
-    path_robot = test.potential_field_path()
-    obstacle_state = test.obstacle_path()
+    path_robot, obstacle_state = test.path_do()
 
     t = [0]
     now_state = [start_robot[0], start_robot[1], start_robot[2]]
@@ -623,10 +738,8 @@ def main():
 
         new_state = np.array([[current_state1[0], current_state1[1]], [current_state2[0], current_state2[1]], [current_state3[0], current_state3[1]]])
 
-        # new = Path(new_state, goal_robot, obstacle_state)
         new = Path(new_state, goal_robot, obstacle_state, path_planning)
-        path_robot = new.potential_field_path()
-        obstacle_state = new.obstacle_path()
+        path_robot, obstacle_state = new.path_do()
 
         # if path_planning1:
             # path_robot1 = new1.potential_field_path()
