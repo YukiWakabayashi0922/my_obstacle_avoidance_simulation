@@ -52,7 +52,7 @@ robot_radius = 5.0  # robot radius [m]
 NUM_OF_OBSTACLES = 12
 
 #initial_param : Set start position and goal position of robots
-class Initial_param:
+class initial_param:
     def __init__(self, start_x, start_y, goal_x, goal_y):
         self.start_x = start_x
         self.start_y = start_y
@@ -385,7 +385,7 @@ class Path:
         return path, obstacle_path
 
 class Config():
-    def __init__(self):
+    def __init__(self, state, ):
         self.max_speed = 1.0
         self.min_speed = -0.5
         self.max_yawrate = 40.0 * math.pi / 180.0
@@ -398,6 +398,8 @@ class Config():
         self.to_goal_cost_gain = 1.0
         self.speed_cost_gain = 1.0
         self.robot_radius = 1.0
+
+        self.state = state
 
 def motion(x, u, dt):
     x[2] += u[1] * dt
@@ -842,7 +844,7 @@ def main():
     goal_x = [30.0, 40.0, 50.0]
     goal_y = [10.0, 40.0, 50.0]
 
-    robot = Initial_param(start_x, start_y, goal_x, goal_y)
+    robot = initial_param(start_x, start_y, goal_x, goal_y)
     start_robot = robot.start()  #dimention = 1
     goal_robot = robot.goal()     #dimention = 1
 
