@@ -35,21 +35,30 @@ class Config():
         self.robot_radius = 1.0  # [m]
 
 class DWA:
-    # def __init__(self, leader_goal, follower_goal, robot_state, obstacle_state):
-    def __init__(self, leader_goal, robot_state, obstacle_state):
-        self.leader_goal = leader_goal        # leader goal
-        # self.follower_goal = follower_goal    # follower goal
-        self.robot_state = robot_state        # robot state
-        self.obstacle_state = obstacle_state  # obstacle state
+    def __init__(self, all_goal, all_robot_state, obstacle_state, flag_path):
+        self.all_goal = all_goal                # goal
+        self.all_robot_state = all_robot_state  # robot state
+        self.obstacle_state = obstacle_state    # obstacle state
+        self.flag_path = flag_path              # flag path do
 
-    def publish_state(self, u, dt):
-        self.robot_state[2] += u[1] * dt
-        self.robot_state[0] += u[0] * math.cos(self.robot_state[2]) * dt
-        self.robot_state[1] += u[0] * math.sin(self.robot_state[2]) * dt
-        self.robot_state[3] = u[0]
-        self.robot_state[4] = u[1]
+    def individual_goal(self, current_number):
+        goal = []
+        goal = self.all_goal[current_number]
+        return goal
 
-        return self.robot_state
+    def individual_robot_state(self, current_number):
+        robot_state = []
+        robot_state = self.all_robot_state[current_number]
+        return robot_state
+
+    def publish_state(self, robot_state, u, dt):
+        robot_state[2] += u[1] * dt
+        robot_state[0] += u[0] * math.cos(robot_state[2]) * dt
+        robot_state[1] += u[0] * math.sin(robot_state[2]) * dt
+        robot_state[3] = u[0]
+        robot_state[4] = u[1]
+
+        return robot_state
 
     def motion(self, x, u, dt):
         x[2] += u[1] * dt
@@ -60,12 +69,12 @@ class DWA:
 
         return x
 
-    def calc_dynamic_window(self, config):
+    def calc_dynamic_window(self, robot_state, config):
         Vs = [config.min_speed, config.max_speed, -config.max_yawrate, config.max_yawrate]
-        Vd = [self.robot_state[3] - config.max_accel * config.dt,
-              self.robot_state[3] + config.max_accel * config.dt,
-              self.robot_state[4] - config.max_dyawrate * config.dt,
-              self.robot_state[4] + config.max_dyawrate * config.dt]
+        Vd = [robot_state[3] - config.max_accel * config.dt,
+              robot_state[3] + config.max_accel * config.dt,
+              robot_state[4] - config.max_dyawrate * config.dt,
+              robot_state[4] + config.max_dyawrate * config.dt]
         dw = [max(Vs[0], Vd[0]), min(Vs[1], Vd[1]), max(Vs[2], Vd[2]), min(Vs[3], Vd[3])]
 
         return dw
@@ -81,8 +90,8 @@ class DWA:
 
         return traj
 
-    def calc_final_input(self, u, dw, config):
-        xinit = self.robot_state[:]
+    def calc_final_input(self, goal, robot_state, u, dw, config):
+        xinit = robot_state[:]
         min_cost = 10000.0
         min_u = u
         min_u[0] = 0.0
@@ -92,7 +101,7 @@ class DWA:
             for y in np.arange(dw[2], dw[3], config.yawrate_reso):
                 traj = DWA.calc_trajectory(self, xinit, v, y, config)
 
-                to_goal_cost = DWA.calc_to_goal_cost(self, traj, config)
+                to_goal_cost = DWA.calc_to_goal_cost(self, goal, traj, config)
                 speed_cost = config.speed_cost_gain * (config.max_speed - traj[-1, 3])
                 ob_cost = DWA.calc_obstacle_cost(self, traj, config)
 
@@ -112,9 +121,9 @@ class DWA:
         minr = float("inf")
 
         for ii in range(0, len(traj[:, 1]), skip_n):
-            for i in range(len(self.ob[:, 0])):
-                ox = self.ob[i, 0]
-                oy = self.ob[i, 1]
+            for i in range(len(self.obstacle_state[:, 0])):
+                ox = self.obstacle_state[i, 0]
+                oy = self.obstacle_state[i, 1]
                 dx = traj[ii, 0] - ox
                 dy = traj[ii, 1] - oy
 
@@ -128,12 +137,12 @@ class DWA:
         return 1.0 / minr  # OK
 
 
-    def calc_to_goal_cost(self, traj, config):
+    def calc_to_goal_cost(self, goal, traj, config):
         # calc to goal cost. It is 2D norm.
 
-        goal_magnitude = math.sqrt(self.goal[0]**2 + self.goal[1]**2)
+        goal_magnitude = math.sqrt(goal[0]**2 + goal[1]**2)
         traj_magnitude = math.sqrt(traj[-1, 0]**2 + traj[-1, 1]**2)
-        dot_product = (self.goal[0] * traj[-1, 0]) + (self.goal[1] * traj[-1, 1])
+        dot_product = (goal[0] * traj[-1, 0]) + (goal[1] * traj[-1, 1])
         error = dot_product / (goal_magnitude * traj_magnitude)
         error_angle = math.acos(error)
         cost = config.to_goal_cost_gain * error_angle
@@ -141,28 +150,43 @@ class DWA:
         return cost
 
     def dwa_control(self, u, config):
-        dw = DWA.calc_dynamic_window(self, config)
-        u, traj = DWA.calc_final_input(self, u, dw, config)
-        publish_state = DWA.publish_state(self, u, config.dt)
+        publish_new_u = []
+        publish_traj = []
+        publish_state = []
 
-        return u, traj, publish_state
+        for i in range(robot_number):
+            goal = DWA.individual_goal(self, i)
+            robot_state = DWA.individual_robot_state(self, i)
 
+            if self.flag_path[i] == True:
+                dw = DWA.calc_dynamic_window(self, robot_state, config)
+                new_u, traj = DWA.calc_final_input(self, goal, robot_state, u[i], dw, config)
+                new_state = DWA.publish_state(self, robot_state, new_u, config.dt)
+
+                publish_new_u.append(new_u)
+                publish_traj.append(traj)
+                publish_state.append(new_state)
+
+            else:
+                dw = DWA.calc_dynamic_window(self, robot_state, config)
+                new_u, traj = DWA.calc_final_input(self, goal, robot_state, u[i], dw, config)
+
+                publish_new_u.append(u[i])
+                publish_traj.append(traj)
+                publish_state.append(robot_state)
+
+        return publish_new_u, publish_traj, publish_state
 
 def plot_arrow(x, y, yaw, length=0.5, width=0.1):  # pragma: no cover
     plt.arrow(x, y, length * math.cos(yaw), length * math.sin(yaw), head_length=width, head_width=width)
     plt.plot(x, y)
 
-# def main(gx=10, gy=10):
 def main():
     print(__file__ + " start!!")
-    # initial state [x(m), y(m), yaw(rad), v(m/s), omega(rad/s)]
-    robot_state1 = np.array([0.0, 0.0, math.pi / 8.0, 0.0, 0.0])
-    # x2 = np.array([0.0, 0.0, math.pi / 8.0, 0.0, 0.0])
-    # goal position [x(m), y(m)]
-    # goal = np.array([gx, gy])
-    leader_goal = np.array([10, 10])
-    # goal2 = np.array([11, 10])
-    # obstacles [x(m) y(m), ....]
+    robot_state = np.array([[0.0, 0.0, math.pi / 8.0, 0.0, 0.0],
+                            [0.0, 2.0, math.pi / 8.0, 0.0, 0.0]])
+    goal = np.array([[10, 10],
+                     [12, 12]])
     obstacle_state = np.array([[-1, -1],
                    # [0, 2],
                    [4.0, 2.0],
@@ -172,67 +196,63 @@ def main():
                    [5.0, 9.0],
                    [8.0, 9.0],
                    [7.0, 9.0],
-                   [12.0, 12.0]
+                   # [12.0, 12.0]
                    ])
 
-    u1 = np.array([0.0, 0.0])
-    # u2 = np.array([0.0, 1.0])
+    u = np.array([[0.0, 0.0],
+                  [0.0, 0.0]])
     config = Config()
-    traj1 = np.array(robot_state1)
-    # traj2 = np.array(x2)
+    traj1 = np.array(robot_state[0])
+    traj2 = np.array(robot_state[1])
 
-    robot1_path = True
-    # robot2_path = True
+    flag_path = np.array([True,
+                          True])
 
     for i in range(1000):
-        if robot1_path == True:
-            dwa1 = DWA(leader_goal, robot_state1, obstacle_state)
-            u1, ltraj1, robot_state1 = dwa1.dwa_control(u1, config)
-            traj1 = np.vstack((traj1, robot_state1))  # store state history
-            # print("ltraj1 : ", ltraj1)
+        dwa = DWA(goal, robot_state, obstacle_state, flag_path)
+        u, ltraj, robot_state = dwa.dwa_control(u, config)
+        traj1 = np.vstack((traj1, robot_state[0]))
+        traj2 = np.vstack((traj2, robot_state[1]))
 
-        # if robot2_path == True:
-        #     dwa2 = DWA(goal2, ob)
-            # u2, ltraj2, x2 = dwa2.dwa_control(x2, u2, config)
-            # traj2 = np.vstack((traj2, x2))  # store state history
+        robot1_check = math.sqrt((robot_state[0][0] - goal[0][0])**2 + (robot_state[0][1] - goal[0][1])**2)
+        robot2_check = math.sqrt((robot_state[1][0] - goal[1][0])**2 + (robot_state[1][1] - goal[1][1])**2)
 
-        # print("u1 : ", u1, "u2 : ", u2)
+        if robot1_check <= config.robot_radius:
+            flag_path[0] = False
+
+        if robot2_check <= config.robot_radius:
+            flag_path[1] = False
 
         if show_animation:
             plt.cla()
-            plt.plot(ltraj1[:, 0], ltraj1[:, 1], "-r")
-            plt.plot(robot_state1[0], robot_state1[1], "xr")
-            plt.plot(leader_goal[0], leader_goal[1], "xb")
-            # plt.plot(ltraj2[:, 0], ltraj2[:, 1], "-g")
-            # plt.plot(x2[0], x2[1], "xg")
-            # plt.plot(goal2[0], goal2[1], "xb")
+            plt.plot(robot_state[0][0], robot_state[0][1], "xr")
+            plt.plot(goal[0][0], goal[0][1], "xb")
+
+            plt.plot(robot_state[1][0], robot_state[1][1], "xr")
+            plt.plot(goal[1][0], goal[1][1], "xb")
+
             plt.plot(obstacle_state[:, 0], obstacle_state[:, 1], "ok")
-            plot_arrow(robot_state1[0], robot_state1[1], robot_state1[2])
+
+            if flag_path[0] == True:
+                plt.plot(ltraj[0][:, 0], ltraj[0][:, 1], "-r")
+
+            if flag_path[1] == True:
+                plt.plot(ltraj[1][:, 0], ltraj[1][:, 1], "-r")
+
+            # plot_arrow(robot_state1[0], robot_state1[1], robot_state1[2])
             # plot_arrow(x2[0], x2[1], x2[2])
             plt.axis("equal")
             plt.grid(True)
             plt.pause(0.0001)
 
-        # check goal
-        robot1_check = math.sqrt((robot_state1[0] - leader_goal[0])**2 + (robot_state1[1] - leader_goal[1])**2)
-        # robot2_check = math.sqrt((x2[0] - goal2[0])**2 + (x2[1] - goal2[1])**2)
-        if robot1_check <= config.robot_radius:
-            robot1_path = False
-
-        # if robot2_check <= config.robot_radius:
-            # robot2_path = False
-
-        # if robot1_path == False and robot2_path == False:
-        if robot1_path == False:
-        # if robot2_path == False:
-            # if math.sqrt((x[0] - goal[0])**2 + (x[1] - goal[1])**2) <= config.robot_radius:
+        if flag_path[0] == False and flag_path[1] == False:
             print("Goal!!")
             break
 
     print("Done")
     if show_animation:
         plt.plot(traj1[:, 0], traj1[:, 1], "-r")
-        # plt.plot(traj2[:, 0], traj2[:, 1], "-g")
+        plt.plot(traj2[:, 0], traj2[:, 1], "-g")
         plt.pause(0.0001)
 
     plt.show()
