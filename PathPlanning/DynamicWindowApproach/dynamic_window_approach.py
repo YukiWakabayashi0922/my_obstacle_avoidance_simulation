@@ -190,6 +190,7 @@ def main(gx=10, gy=10):
 
     for i in range(1000):
         u, ltraj = dwa_control(x, u, config, goal, ob)
+        print("vel : ", u[0], "yaw", u[1])
 
         x = motion(x, u, config.dt)
         traj = np.vstack((traj, x))  # store state history
