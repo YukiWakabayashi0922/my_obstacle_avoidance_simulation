@@ -9,6 +9,7 @@ author: Atsushi Sakai (@Atsushi_twi)
 import math
 import numpy as np
 import matplotlib.pyplot as plt
+import random
 
 import sys
 sys.path.append("../../")
@@ -33,6 +34,8 @@ class Config():
         self.to_goal_cost_gain = 1.0
         self.speed_cost_gain = 1.0
         self.robot_radius = 1.0  # [m]
+        # self.obstacle_update_x = 0.1  # [m/ss]
+        # self.obstacle_update_y = 0.1  # [m/ss]
 
 class DWA:
     def __init__(self, all_goal, all_robot_state, obstacle_state, flag_path):
@@ -105,7 +108,7 @@ class DWA:
                 speed_cost = config.speed_cost_gain * (config.max_speed - traj[-1, 3])
                 ob_cost = DWA.calc_obstacle_cost(self, traj, config)
 
-                final_cost = to_goal_cost + speed_cost + ob_cost
+                final_cost = 0.5*to_goal_cost + speed_cost + 1.2*ob_cost
 
                 if min_cost >= final_cost:
                     min_cost = final_cost
@@ -121,9 +124,9 @@ class DWA:
         minr = float("inf")
 
         for ii in range(0, len(traj[:, 1]), skip_n):
-            for i in range(len(self.obstacle_state[:, 0])):
-                ox = self.obstacle_state[i, 0]
-                oy = self.obstacle_state[i, 1]
+            for i in range(len(self.obstacle_state)):
+                ox = self.obstacle_state[i][0]
+                oy = self.obstacle_state[i][1]
                 dx = traj[ii, 0] - ox
                 dy = traj[ii, 1] - oy
 
@@ -134,7 +137,7 @@ class DWA:
                 if minr >= r:
                     minr = r
 
-        return 1.0 / minr  # OK
+        return 1.0 / minr  # OK ぶつかりそうなほど大きい値
 
 
     def calc_to_goal_cost(self, goal, traj, config):
@@ -148,6 +151,21 @@ class DWA:
         cost = config.to_goal_cost_gain * error_angle
 
         return cost
+
+    def obstacle_update(self):
+        publish_obstacle_state = []
+        obstacle_update_x = -0.01
+        obstacle_update_y = -0.01
+        # obstacle_update_x = np.random.random()/10
+        # obstacle_update_y = np.random.random()/10
+
+        for i in range(len(self.obstacle_state)):
+            self.obstacle_state[i][0] += obstacle_update_x
+            self.obstacle_state[i][1] += obstacle_update_y
+
+            publish_obstacle_state.append([self.obstacle_state[i][0], self.obstacle_state[i][1]])
+
+        return publish_obstacle_state
 
     def dwa_control(self, u, config):
         publish_new_u = []
@@ -183,21 +201,17 @@ def plot_arrow(x, y, yaw, length=0.5, width=0.1):  # pragma: no cover
 
 def main():
     print(__file__ + " start!!")
-    robot_state = np.array([[0.0, 0.0, math.pi / 8.0, 0.0, 0.0],
-                            [0.0, 2.0, math.pi / 8.0, 0.0, 0.0]])
-    goal = np.array([[10, 10],
-                     [12, 12]])
-    obstacle_state = np.array([[-1, -1],
-                   # [0, 2],
-                   [4.0, 2.0],
-                   [5.0, 4.0],
-                   [5.0, 5.0],
-                   [5.0, 6.0],
-                   [5.0, 9.0],
-                   [8.0, 9.0],
-                   [7.0, 9.0],
-                   # [12.0, 12.0]
-                   ])
+    robot_state = np.array([[1.0, 1.0, math.pi / 8.0, 0.0, 0.0],
+                            [-1.0, -1.0, math.pi / 8.0, 0.0, 0.0]])
+    # goal = np.array([[10, 10],
+                     # [robot_state[0][0] - 0.3, robot_state[0][1] - 0.3]])
+    obstacle_state =[[4.0, 2.0],
+                     [5.0, 4.0],
+                     [5.0, 5.0],
+                     [5.0, 6.0],
+                     [5.0, 9.0],
+                     [8.0, 9.0],
+                     [7.0, 9.0]]
 
     u = np.array([[0.0, 0.0],
                   [0.0, 0.0]])
@@ -209,8 +223,13 @@ def main():
                           True])
 
     for i in range(1000):
+        goal = np.array([[10, 10], [robot_state[0][0] - 0.3, robot_state[0][1] - 0.3]])
+
         dwa = DWA(goal, robot_state, obstacle_state, flag_path)
         u, ltraj, robot_state = dwa.dwa_control(u, config)
+        obstacle_state = dwa.obstacle_update()
+        # print(obstacle_state)
+
         traj1 = np.vstack((traj1, robot_state[0]))
         traj2 = np.vstack((traj2, robot_state[1]))
 
@@ -228,16 +247,17 @@ def main():
             plt.plot(robot_state[0][0], robot_state[0][1], "xr")
             plt.plot(goal[0][0], goal[0][1], "xb")
 
-            plt.plot(robot_state[1][0], robot_state[1][1], "xr")
+            plt.plot(robot_state[1][0], robot_state[1][1], "xg")
             plt.plot(goal[1][0], goal[1][1], "xb")
 
-            plt.plot(obstacle_state[:, 0], obstacle_state[:, 1], "ok")
+            for i in range(len(obstacle_state)):
+                plt.plot(obstacle_state[i][0], obstacle_state[i][1], "ok")
 
             if flag_path[0] == True:
                 plt.plot(ltraj[0][:, 0], ltraj[0][:, 1], "-r")
 
             if flag_path[1] == True:
-                plt.plot(ltraj[1][:, 0], ltraj[1][:, 1], "-r")
+                plt.plot(ltraj[1][:, 0], ltraj[1][:, 1], "-g")
 
             # plot_arrow(robot_state1[0], robot_state1[1], robot_state1[2])
             # plot_arrow(x2[0], x2[1], x2[2])
@@ -248,6 +268,20 @@ def main():
         if flag_path[0] == False and flag_path[1] == False:
             print("Goal!!")
             break
+
+        # goal[1][0] = 0.0
+        # goal[1][1] = 0.0
+
+        # print(robot_state[0][0])
+
+        # current_leader_x = robot_state[0][0]
+        # current_leader_y = robot_state[0][1]
+
+        # goal[1][0] = current_leader_x - 0.3
+        # goal[1][1] = current_leader_y - 0.3
+
+        # current_leader_x = 0.0
+        # current_leader_y = 0.0
 
     print("Done")
     if show_animation:
