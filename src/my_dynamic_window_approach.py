@@ -1,419 +1,346 @@
-# controller
-import numpy as np
-np.seterr(divide='ignore', invalid='ignore')
+"""
 
-import matplotlib.pyplot as plt
-import pandas as pd
-from animation import Animation_robot
+Mobile robot motion planning sample with Dynamic Window Approach
+
+author: Atsushi Sakai (@Atsushi_twi)
+
+"""
+
 import math
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+
 import sys
+sys.path.append("../../")
 
-# 基本関数
-# 正規化
-def min_max_normalize(data):
+show_animation = True   # show trajectory
+# show_animation = False  # don't show trajectory
 
-    data = np.array(data)
+robot_number = 2        # simulation robot number
 
-    max_data = max(data)
-    min_data = min(data)
-
-    if max_data - min_data == 0:
-        data = [0.0 for i in range(len(data))]
-    else:
-        data = (data - min_data) / (max_data - min_data)
-
-    return data
-# 角度補正用
-def angle_range_corrector(angle):
-
-    if angle > math.pi:
-        while angle > math.pi:
-            angle -=  2 * math.pi
-    elif angle < -math.pi:
-        while angle < -math.pi:
-            angle += 2 * math.pi
-
-    return angle
-
-# 円を書く
-def write_circle(center_x, center_y, angle, circle_size=0.2):#人の大きさは半径15cm
-    # 初期化
-    circle_x = [] #位置を表す円のx
-    circle_y = [] #位置を表す円のy
-
-    steps = 100 #円を書く分解能はこの程度で大丈夫
-    for i in range(steps):
-        circle_x.append(center_x + circle_size*math.cos(i*2*math.pi/steps))
-        circle_y.append(center_y + circle_size*math.sin(i*2*math.pi/steps))
-
-    circle_line_x = [center_x, center_x + math.cos(angle) * circle_size]
-    circle_line_y = [center_y, center_y + math.sin(angle) * circle_size]
-
-    return circle_x, circle_y, circle_line_x, circle_line_y
-
-# ルール
-# x, y, thは基本的に今のstate
-# g_ はgoal
-# traj_ は過去の軌跡
-# 単位は，角度はrad，位置はm
-# 二輪モデルなので入力は速度と角速度
-
-# path
-class Path():
-    def __init__(self, u_th, u_v):
-        self.x = None
-        self.y = None
-        self.th = None
-        self.u_v = u_v
-        self.u_th = u_th
-
-class Obstacle():
-    def __init__(self, x, y, size):
-        self.x = x
-        self.y = y
-        self.size = size
-
-class Two_wheeled_robot(): # 実際のロボット
-    def __init__(self, init_x, init_y, init_th):
-        # 初期状態
-        self.x = init_x
-        self.y = init_y
-        self.th = init_th
-        self.u_v = 0.0
-        self.u_th = 0.0
-
-        # 時刻歴保存用
-        self.traj_x = [init_x]
-        self.traj_y = [init_y]
-        self.traj_th = [init_th]
-        self.traj_u_v = [0.0]
-        self.traj_u_th = [0.0]
-
-    def update_state(self, u_th, u_v, dt): # stateを更新
-
-        self.u_th = u_th
-        self.u_v = u_v
-
-        next_x = self.u_v * math.cos(self.th) * dt + self.x
-        next_y = self.u_v * math.sin(self.th) * dt + self.y
-        next_th = self.u_th * dt + self.th
-
-        self.traj_x.append(next_x)
-        self.traj_y.append(next_y)
-        self.traj_th.append(next_th)
-
-        self.x = next_x
-        self.y = next_y
-        self.th = next_th
-
-        return self.x, self.y, self.th # stateを更新
-
-class Simulator_DWA_robot(): # DWAのシミュレータ用
+# robot parameter
+class Config():
     def __init__(self):
-        # self.model 独立二輪型
-        # 加速度制限
-        self.max_accelation = 1.0
-        self.max_ang_accelation = 100 * math.pi /180
-        # 速度制限
-        self.lim_max_velo = 1.6 # m/s
-        self.lim_min_velo = 0.0 # m/s
-        self.lim_max_ang_velo = math.pi
-        self.lim_min_ang_velo = -math.pi
+        self.max_speed    =  1.0  # [m/s]
+        self.min_speed    = -1.0  # [m/s]
+        self.max_yawrate  =  40.0 * math.pi / 180.0  # [rad/s]
+        self.min_yawrate  = -40.0 * math.pi / 180.0  # [rad/s]
+        self.max_accel    = 0.2  # [m/ss]
+        self.max_dyawrate = 20.0 * math.pi / 180.0  # [rad/ss]
+        self.vel_reso     = 0.01  # [m/s]
+        self.yawrate_reso = 0.1 * math.pi / 180.0  # [rad/s]
+        self.dt           = 0.1  # [s]
+        self.predict_time = 2.0  # [s]
+        self.to_goal_cost_gain = 0.7
+        self.speed_cost_gain   = 1.0
+        self.robot_radius = 0.5  # [m]
+        self.select_obstacle_radius = 5.0  # [m]
+        # self.obstacle_update_x = 0.1  # [m/ss]
+        # self.obstacle_update_y = 0.1  # [m/ss]
 
-    # 予想状態を作成する
-    def predict_state(self, ang_velo, velo, x, y, th, dt, pre_step): # DWA用(何秒後かのstateを予測))
-        next_xs = []
-        next_ys = []
-        next_ths = []
 
-        for i in range(pre_step):
-            temp_x = velo * math.cos(th) * dt + x
-            temp_y = velo * math.sin(th) * dt + y
-            temp_th = ang_velo * dt + th
+# ロボットの予測軌跡を算出するクラス
+class Predict_path():
+    def __init__(self, state):
+        self.state = state      # [x, y, yaw, velocity, yawrate]
+        self.config = Config()
 
-            next_xs.append(temp_x)
-            next_ys.append(temp_y)
-            next_ths.append(temp_th)
+    def calc_dynamic_window(self):
+        Vs = [self.config.min_speed, self.config.max_speed, self.config.min_yawrate, self.config.max_yawrate]
+        Vd = [self.state[3] - self.config.max_accel * self.config.dt,
+              self.state[3] + self.config.max_accel * self.config.dt,
+              self.state[4] - self.config.max_dyawrate * self.config.dt,
+              self.state[4] + self.config.max_dyawrate * self.config.dt]
+        dw = [max(Vs[0], Vd[0]), min(Vs[1], Vd[1]), max(Vs[2], Vd[2]), min(Vs[3], Vd[3])]
 
-            x = temp_x
-            y = temp_y
-            th = temp_th
+        return dw
 
-        # print('next_xs = {0}'.format(next_xs))
+    def calc_path(self, current_state, vel, yawrate):
+        path_x = []
+        path_y = []
+        path_yaw = []
+        time = 0
 
-        return next_xs, next_ys, next_ths # 予想した軌跡
+        while time <= self.config.predict_time:
+            temp_x = vel * math.cos(current_state[2]) * self.config.dt + current_state[0]
+            temp_y = vel * math.sin(current_state[2]) * self.config.dt + current_state[1]
+            temp_yaw = yawrate * self.config.dt + current_state[2]
 
-# DWA
-class DWA():
-    def __init__(self):
-        # 初期化
-        # simulation用のロボット
-        self.simu_robot = Simulator_DWA_robot()
+            path_x.append(temp_x)
+            path_y.append(temp_y)
+            path_yaw.append(temp_yaw)
 
-        # 予測時間(s)
-        self.pre_time = 3
-        self.pre_step = 30
+            current_state[0] = temp_x
+            current_state[1] = temp_y
+            current_state[2] = temp_yaw
 
-        # 探索時の刻み幅
-        self.delta_velo = 0.02
-        self.delta_ang_velo = 0.02
+            time += self.config.dt
 
-        # サンプリングタイム(変更の場合，共通する項があるので，必ずほかのところも確認する)
-        self.samplingtime = 0.1
+        path = [path_x, path_y, path_yaw, vel, yawrate]
 
-        # 重みづけ
-        self.weight_angle = 0.04
-        self.weight_velo = 0.2
-        self.weight_obs = 0.1
+        return path
 
-        # すべてのPathを保存
-        self.traj_paths = []
-        self.traj_opt = []
+    def get_predict_path(self, dw):
+        # dw = Predict_path().calc_dynamic_window(self)
+        publish_path = []
 
-    def calc_input(self, g_x, g_y, state, obstacles): # stateはロボットクラスでくる
-        # Path作成
-        paths = self._make_path(state)
-        # Path評価
-        opt_path = self._eval_path(paths, g_x, g_y, state, obstacles)
+        for vel in np.arange(dw[0], dw[1], self.config.vel_reso):
+            for yawrate in np.arange(dw[2], dw[3], self.config.yawrate_reso):
+                current_state = [self.state[0], self.state[1], self.state[2]]
+                path = Predict_path.calc_path(self, current_state, vel, yawrate)
 
-        self.traj_opt.append(opt_path)
+                publish_path.append(path)
 
-        return paths, opt_path
+        return publish_path
 
-    def _make_path(self, state):
-        # 角度と速度の範囲算出
-        min_ang_velo, max_ang_velo, min_velo, max_velo = self._calc_range_velos(state)
+# 評価関数の計算
+class Dynamic_Windou_Approach():
+    def __init__(self, all_goal, all_path, all_robot_state, obstacle_state, flag_path):
+        self.all_goal = all_goal
+        self.all_path = all_path
+        self.all_robot_state = all_robot_state
+        self.obstacle_state = obstacle_state
+        self.flag_path = flag_path
+        self.config = Config()
 
-        # 全てのpathのリスト
-        paths = []
+    def individual_goal(self, current_number):
+        goal = []
+        goal = self.all_goal[current_number]
+        return goal
 
-        # 角速度と速度の組み合わせを全探索
-        for ang_velo in np.arange(min_ang_velo, max_ang_velo, self.delta_ang_velo):
-            for velo in np.arange(min_velo, max_velo, self.delta_velo):
+    def individual_path(self, current_number):
+        path = []
+        path = self.all_path[current_number]
+        return path
 
-                path = Path(ang_velo, velo)
+    def individual_robot_state(self, current_number):
+        robot_state = []
+        robot_state = self.all_robot_state[current_number]
+        return robot_state
 
-                next_x, next_y, next_th \
-                    = self.simu_robot.predict_state(ang_velo, velo, state.x, state.y, state.th, self.samplingtime, self.pre_step)
+    def calc_heading(self, goal, current_path):
+        last_x = current_path[0][-1]
+        last_y = current_path[1][-1]
+        last_yaw = current_path[2][-1]
 
-                path.x = next_x
-                path.y = next_y
-                path.th = next_th
+        angle_to_goal = math.atan2(goal[0] - last_x, goal[1] - last_y)
+        score_angle = angle_to_goal - last_yaw
 
-                # 作ったpathを追加
-                paths.append(path)
+        if score_angle > math.pi:
+            while score_angle > math.pi:
+                score_angle -= 2 * math.pi
+        elif score_angle < -math.pi:
+            while score_angle < -math.pi:
+                score_angle += 2 * math.pi
 
-        # 時刻歴Pathを保存
-        self.traj_paths.append(paths)
+        cost = abs(score_angle) / math.pi
+        return cost
 
-        return paths
+    def select_obstacle(self, robot_state):
+        select_obstacle_state = [[2, 2], [3, 3]]
 
-    def _calc_range_velos(self, state): # 角速度と角度の範囲決定①
-        # 角速度
-        range_ang_velo = self.samplingtime * self.simu_robot.max_ang_accelation
-        min_ang_velo = state.u_th - range_ang_velo
-        max_ang_velo = state.u_th + range_ang_velo
-        # 最小値
-        if min_ang_velo < self.simu_robot.lim_min_ang_velo:
-            min_ang_velo = self.simu_robot.lim_min_ang_velo
-        # 最大値
-        if max_ang_velo > self.simu_robot.lim_max_ang_velo:
-            max_ang_velo = self.simu_robot.lim_max_ang_velo
+        for i in range(len(self.obstacle_state)):
+            temp_dist_to_obstacle = math.sqrt(math.hypot(robot_state[0] - self.obstacle_state[i][0], robot_state[1] - self.obstacle_state[i][1]))
 
-        # 速度
-        range_velo = self.samplingtime * self.simu_robot.max_accelation
-        min_velo = state.u_v - range_velo
-        max_velo = state.u_v + range_velo
-        # 最小値
-        if min_velo < self.simu_robot.lim_min_velo:
-            min_velo = self.simu_robot.lim_min_velo
-        # 最大値
-        if max_velo > self.simu_robot.lim_max_velo:
-            max_velo = self.simu_robot.lim_max_velo
+            if temp_dist_to_obstacle < self.config.select_obstacle_radius:
+                select_obstacle_state.append(self.obstacle_state[i])
 
-        return min_ang_velo, max_ang_velo, min_velo, max_velo
+        return select_obstacle_state
 
-    def _eval_path(self, paths, g_x, g_y, state, obastacles):
-        # 一番近い障害物判定
-        nearest_obs = self._calc_nearest_obs(state, obastacles)
+    def calc_obstacle(self, current_path, robot_state):
+        select_obstacle_state = Dynamic_Windou_Approach.select_obstacle(self, robot_state)
+        min_dist = float("inf")
+        max_dist = -float("inf")
 
-        score_heading_angles = []
-        score_heading_velos = []
-        score_obstacles = []
+        for i in range(len(current_path[0][0])-1):
+            # print(len(current_path[0][0]))
+            for j in range(len(select_obstacle_state)):
+                # print(current_path[0][i][0])
+                temp_dist_to_obstacle = math.sqrt(math.hypot(current_path[0][i][0] - select_obstacle_state[j][0], current_path[1][i][0] - select_obstacle_state[j][1]))
 
-        # 全てのpathで評価を検索
-        for path in paths:
-            # (1) heading_angle
-            score_heading_angles.append(self._heading_angle(path, g_x, g_y))
-            # (2) heading_velo
-            score_heading_velos.append(self._heading_velo(path))
-            # (3) obstacle
-            score_obstacles.append(self._obstacle(path, nearest_obs))
+                if temp_dist_to_obstacle < self.config.robot_radius:
+                    return float("inf")
 
-        # print('angle = {0}'.format(score_heading_angles))
-        # print('velo = {0}'.format(score_heading_velos))
-        # print('obs = {0}'.format(score_obstacles))
+                if temp_dist_to_obstacle <= min_dist:
+                    min_dist = temp_dist_to_obstacle
 
-        # 正規化
-        for scores in [score_heading_angles, score_heading_velos, score_obstacles]:
-            scores = min_max_normalize(scores)
+                if temp_dist_to_obstacle >= max_dist:
+                    max_dist = temp_dist_to_obstacle
 
-        score = 0.0
-        # 最小pathを探索
-        for k in range(len(paths)):
-            temp_score = 0.0
+        cost = min_dist / max_dist
+        return cost
 
-            temp_score = self.weight_angle * score_heading_angles[k] + \
-                         self.weight_velo * score_heading_velos[k] + \
-                         self.weight_obs * score_obstacles[k]
+    # def calc_velocity(self):
 
-            if temp_score > score:
-                opt_path = paths[k]
-                score = temp_score
 
-        return opt_path
+    def calc_velocity_last(self, velocity):
+        cost = (self.config.max_speed - velocity) / self.config.max_speed
+        return cost
 
-    def _heading_angle(self, path, g_x, g_y): # ゴールに向いているか
-        # 終端の向き
-        last_x = path.x[-1]
-        last_y = path.y[-1]
-        last_th = path.th[-1]
+    def new_robot_state(self, current_robot_state, vel, yawrate):
+        current_robot_state[2] += yawrate * self.config.dt
+        current_robot_state[0] += vel * math.cos(current_robot_state[2]) * self.config.dt
+        current_robot_state[1] += vel * math.sin(current_robot_state[2]) * self.config.dt
+        current_robot_state[3] = vel
+        current_robot_state[4] = yawrate
 
-        # 角度計算
-        angle_to_goal = math.atan2(g_y-last_y, g_x-last_x)
+        return current_robot_state
 
-        # score計算
-        score_angle = angle_to_goal - last_th
+    def dwa_control(self):
+        publish_best_path = []
+        publish_robot_state = []
 
-        # ぐるぐる防止
-        score_angle = abs(angle_range_corrector(score_angle))
+        for i in range(robot_number):
+            current_goal = Dynamic_Windou_Approach.individual_goal(self, i)
+            current_path = Dynamic_Windou_Approach.individual_path(self, i)
+            print(len(current_path))
+            current_robot_state = Dynamic_Windou_Approach.individual_robot_state(self, i)
 
-        # 最大と最小をひっくり返す
-        score_angle = math.pi - score_angle
-
-        # print('score_sngle = {0}' .format(score_angle))
-
-        return score_angle
-
-    def _heading_velo(self, path): # 速く進んでいるか（直進）
-
-        score_heading_velo = path.u_v
-
-        return score_heading_velo
-
-    def _calc_nearest_obs(self, state, obstacles):
-        area_dis_to_obs = 5 # パラメータ（何メートル考慮するか，本当は制動距離）
-        nearest_obs = [] # あるエリアに入ってる障害物
-
-        for obs in obstacles:
-            temp_dis_to_obs = math.sqrt((state.x - obs.x) ** 2 + (state.y - obs.y) ** 2)
-
-            if temp_dis_to_obs < area_dis_to_obs :
-                nearest_obs.append(obs)
-
-        return nearest_obs
-
-    def _obstacle(self, path, nearest_obs):
-        # 障害物回避（エリアに入ったらその線は使わない）/ (障害物ともっとも近い距離距離)))
-        score_obstacle = 2
-        temp_dis_to_obs = 0.0
-
-        for i in range(len(path.x)):
-            for obs in nearest_obs:
-                temp_dis_to_obs = math.sqrt((path.x[i] - obs.x) * (path.x[i] - obs.x) + (path.y[i] - obs.y) *  (path.y[i] - obs.y))
-
-                if temp_dis_to_obs < score_obstacle:
-                    score_obstacle = temp_dis_to_obs # 一番近いところ
-
-                # そもそも中に入ってる判定
-                if temp_dis_to_obs < obs.size + 0.75: # マージン
-                    score_obstacle = -float('inf')
-                    break
-
+            if self.flag_path[i] == False:
+                publish_best_path.append(current_path)
+                publish_robot_state.append(current_robot_state)
             else:
-                continue
+                if i == robot_number - 1:  # 最後尾のロボット
+                    for j in range(len(current_path)):
+                        heading = Dynamic_Windou_Approach.calc_heading(self, current_goal, current_path[j])
+                        obstacle = Dynamic_Windou_Approach.calc_obstacle(self, current_path[j], current_robot_state)
+                        velocity = Dynamic_Windou_Approach.calc_velocity_last(self, current_path[j][3])
 
-            break
+                        dwa_cost = heading + obstacle + velocity
 
-        return score_obstacle
+                        if min_dwa_cost >= dwa_cost:
+                            min_dwa_cost = dwa_cost
+                            best_path = current_path[j]
 
-class Const_goal():# goal作成プログラム
-    def __init__(self):
-        # self.human_trajectory = ...的な
-        self.traj_g_x = []
-        self.traj_g_y = []
+                    new_state = Dynamic_Windou_Approach.new_robot_state(self, current_robot_state, best_path[3], best_path[4])
+                    publish_best_path.append(best_path)
+                    publish_robot_state.append(new_state)
 
-    def calc_goal(self, time_step): # 本当は人の値が入ってもよいかも
-        if time_step <= 100:
-            g_x  = 10.0
-            g_y = 10.0
-        else:
-            g_x = -10.0
-            g_y = -10.0
+                else:
+                    for j in range(len(current_path)):
+                        heading = Dynamic_Windou_Approach.calc_heading(self, current_goal, current_path[j])
+                        obstacle = Dynamic_Windou_Approach.calc_obstacle(self, current_path, current_robot_state)
+                        velocity = Dynamic_Windou_Approach.calc_velocity_last(self, current_path[j][3])
+                        # velocity = Dynamic_Windou_Approach().calc_velocity(self, )
 
-        self.traj_g_x.append(g_x)
-        self.traj_g_y.append(g_y)
+                        dwa_cost = heading + obstacle + velocity
 
-        return g_x, g_y
+                        if min_dwa_cost >= dwa_cost:
+                            min_dwa_cost = dwa_cost
+                            best_path = current_path[j]
 
-class Main_controller():# Mainの制御クラス
-    def __init__(self):
-        self.robot = Two_wheeled_robot(0.0, 0.0, 0.0)
-        self.goal_maker = Const_goal()
-        self.controller = DWA()
+                    new_state = Dynamic_Windou_Approach.new_robot_state(self, current_robot_state, best_path[3], best_path[4])
+                    publish_best_path.append(best_path)
+                    publish_robot_state.append(new_state)
 
-        # 障害物（本当はレーザーの値等を使用）
-        self.obstacles = []
-        '''
-        obstacle_num = 3
-        for i in range(obstacle_num):
-            # x = np.random.randint(-5, 5)
-            # y = np.random.randint(-5, 5)
-            # size = np.random.randint(-5, 5)
+        return publish_best_path, publish_robot_state
 
-            self.obstacles.append(Obstacle(x, y, size))
-        '''
+class Plot():
+    def __init__(self, all_goal, all_path, all_robot_state, obstacle_state, flag_path):
+        self.all_goal = all_goal
+        self.all_path = all_path
+        self.all_robot_state = all_robot_state
+        self.obstacle_state = obstacle_state
+        self.flag_path = flag_path
 
-        self.obstacles =[Obstacle(4, 1, 0.25), Obstacle(0, 4.5, 0.25),  Obstacle(3, 4.5, 0.25), Obstacle(5, 3.5, 0.25),  Obstacle(7.5, 9.0, 0.25)]
+    def individual_goal(self, current_number):
+        goal = []
+        goal = self.all_goal[current_number]
+        return goal
 
-        # ここを変えたら他もチェック
-        self.samplingtime = 0.1
+    def individual_path(self, current_number):
+        path = []
+        path = self.all_path[current_number]
+        return path
 
-    def run_to_goal(self):
-        goal_flag = False
-        time_step = 0
+    def individual_robot_state(self, current_number):
+        robot_state = []
+        robot_state = self.all_robot_state[current_number]
+        return robot_state
 
-        while not goal_flag:
-        # for i in range(250):
-            g_x, g_y = self.goal_maker.calc_goal(time_step)
+    def plot_do(self):
+        plt.cla()
 
-            # 入力決定
-            paths, opt_path = self.controller.calc_input(g_x, g_y, self.robot, self.obstacles)
+        for i in range(len(self.obstacle_state)):
+            plt.plot(self.obstacle_state[i][0], self.obstacle_state[i][1], "ok")
 
-            u_th = opt_path.u_th
-            u_v = opt_path.u_v
+        for i in range(robot_number):
+            current_goal = Dynamic_Windou_Approach.individual_goal(self, i)
+            current_path = Dynamic_Windou_Approach.individual_path(self, i)
+            current_robot_state = Dynamic_Windou_Approach.individual_robot_state(self, i)
 
-            # 入力で状態更新
-            self.robot.update_state(u_th, u_v, self.samplingtime)
+            plt.plot(current_robot_state[0], current_robot_state[1], "or")
+            plt.plot(goal[0], goal[1], "xb")
 
-            # goal判定
-            dis_to_goal = np.sqrt((g_x-self.robot.x)*(g_x-self.robot.x) + (g_y-self.robot.y)*(g_y-self.robot.y))
-            if dis_to_goal < 0.5:
-                goal_flag = True
+            if self.flag_path[i] == True:
+                plt.plot(current_path[0], current_path[1], "-r")
 
-            time_step += 1
-
-        return self.robot.traj_x, self.robot.traj_y, self.robot.traj_th, \
-                self.goal_maker.traj_g_x, self.goal_maker.traj_g_y, self.controller.traj_paths, self.controller.traj_opt, self.obstacles
+        plt.axis("equal")
+        plt.grid(True)
+        plt.pause(0.0001)
 
 def main():
-    animation = Animation_robot()
-    animation.fig_set()
+    print(__file__ + " start!!")
 
-    controller = Main_controller()
-    traj_x, traj_y, traj_th, traj_g_x, traj_g_y, traj_paths, traj_opt, obstacles = controller.run_to_goal()
+    robot_state = [[0.0, 0.0, 0.0, 0.0, 0.0],
+                   [-5.0, 0.0, 0.0, 0.0, 0.0]]
 
-    ani = animation.func_anim_plot(traj_x, traj_y, traj_th, traj_paths, traj_g_x, traj_g_y, traj_opt, obstacles)
+    obstacle_state = [[5, 5], [5, 7], [5, 9]]
 
-if __name__ == '__main__':
+    goal = [[10, 10], [10, 10]]
+
+    traj1 = np.array(robot_state[0])
+    traj2 = np.array(robot_state[1])
+
+    flag_path = [True, True]
+
+    config = Config()
+
+    for i in range(1000):
+        robot1_check = math.sqrt(math.hypot(robot_state[0][0] - goal[0][0], robot_state[0][1] - goal[0][1]))
+        robot2_check = math.sqrt(math.hypot(robot_state[1][0] - goal[1][0], robot_state[1][1] - goal[1][1]))
+
+        if robot1_check <= config.robot_radius:
+            flag_path[0] = False
+        else:
+            flag_path[0] = True
+
+        if robot2_check <= config.robot_radius:
+            flag_path[1] = False
+        else:
+            flag_path[1] = True
+
+        pp1 = Predict_path(robot_state[0])
+        dw1 = pp1.calc_dynamic_window()
+        path1 = pp1.get_predict_path(dw1)
+
+        pp2 = Predict_path(robot_state[1])
+        dw2 = pp2.calc_dynamic_window()
+        path2 = pp2.get_predict_path(dw2)
+
+        path = [path1, path2]
+
+        dwa = Dynamic_Windou_Approach(goal, path, robot_state, obstacle_state, flag_path)
+        best_path, robot_state = dwa.dwa_control()
+
+        plt = Plot(goal, best_path, robot_state, obstacle_state, flag_path)
+        plt.plot_do()
+
+        traj1 = np.vstack((traj1, robot_state[0]))
+        traj2 = np.vstack((traj2, robot_state[1]))
+
+        if flag_path[0] == False and flag_path[1] == False:
+            print("Goal!!")
+            break
+
+        goal = [[10, 10], [robot_state[0], robot_state[1]]]
+
+    plt.plot(traj1[:, 0], traj1[:, 1], "-r")
+    plt.plot(traj2[:, 0], traj2[:, 1], "-r")
+    plt.pause(0.0001)
+
+    plt.show()
+
+if __name__ == "__main__":
     main()
