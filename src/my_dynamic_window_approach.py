@@ -22,20 +22,21 @@ robot_number = 2        # simulation robot number
 # robot parameter
 class Config():
     def __init__(self):
-        self.max_speed    =  1.0  # [m/s]
-        self.min_speed    = -1.0  # [m/s]
-        self.max_yawrate  =  40.0 * math.pi / 180.0  # [rad/s]
-        self.min_yawrate  = -40.0 * math.pi / 180.0  # [rad/s]
-        self.max_accel    = 0.2  # [m/ss]
-        self.max_dyawrate = 20.0 * math.pi / 180.0  # [rad/ss]
-        self.vel_reso     = 0.01  # [m/s]
-        self.yawrate_reso = 0.1 * math.pi / 180.0  # [rad/s]
+        self.max_speed    = 1.0  # [m/s]
+        self.min_speed    = 0.0  # [m/s]
+        self.max_yawrate  =  180.0 * math.pi / 180.0  # [rad/s]
+        self.min_yawrate  = -180.0 * math.pi / 180.0  # [rad/s]
+        self.max_accel    = 1.0  # [m/ss]
+        self.max_dyawrate = 100.0 * math.pi / 180.0  # [rad/ss]
+        self.vel_reso     = 0.02  # [m/s]
+        self.yawrate_reso = math.pi / 180.0  # [rad/s]
         self.dt           = 0.1  # [s]
         self.predict_time = 2.0  # [s]
-        self.to_goal_cost_gain = 0.7
-        self.speed_cost_gain   = 1.0
-        self.robot_radius = 0.5  # [m]
-        self.select_obstacle_radius = 5.0  # [m]
+        self.heading_weight = 0.7
+        self.obstacle_weight = 0.03
+        self.velocity_weight = 1.0
+        self.robot_distance_cost = 4.0
+        self.robot_radius = 0.7  # [m]
         # self.obstacle_update_x = 0.1  # [m/ss]
         # self.obstacle_update_y = 0.1  # [m/ss]
 
@@ -81,8 +82,9 @@ class Predict_path():
 
         return path
 
-    def get_predict_path(self, dw):
-        # dw = Predict_path().calc_dynamic_window(self)
+    def get_predict_path(self):
+        dw = Predict_path.calc_dynamic_window(self)
+        # print(dw)
         publish_path = []
 
         for vel in np.arange(dw[0], dw[1], self.config.vel_reso):
@@ -120,44 +122,19 @@ class Dynamic_Windou_Approach():
         return robot_state
 
     def calc_heading(self, goal, current_path):
-        last_x = current_path[0][-1]
-        last_y = current_path[1][-1]
-        last_yaw = current_path[2][-1]
-
-        angle_to_goal = math.atan2(goal[0] - last_x, goal[1] - last_y)
-        score_angle = angle_to_goal - last_yaw
-
-        if score_angle > math.pi:
-            while score_angle > math.pi:
-                score_angle -= 2 * math.pi
-        elif score_angle < -math.pi:
-            while score_angle < -math.pi:
-                score_angle += 2 * math.pi
-
-        cost = abs(score_angle) / math.pi
-        return cost
-
-    def select_obstacle(self, robot_state):
-        select_obstacle_state = [[2, 2], [3, 3]]
-
-        for i in range(len(self.obstacle_state)):
-            temp_dist_to_obstacle = math.sqrt(math.hypot(robot_state[0] - self.obstacle_state[i][0], robot_state[1] - self.obstacle_state[i][1]))
-
-            if temp_dist_to_obstacle < self.config.select_obstacle_radius:
-                select_obstacle_state.append(self.obstacle_state[i])
-
-        return select_obstacle_state
+        goal_magnitude = math.sqrt(goal[0]**2 + goal[1]**2)
+        path_magnitude = math.sqrt(current_path[0][-1]**2 + current_path[1][-1]**2)
+        dot_product = (goal[0] * current_path[0][-1]) + (goal[1] * current_path[1][-1])
+        error = dot_product / ((goal_magnitude * path_magnitude) + 0.001)
+        error_angle = math.acos(error)
+        return error_angle
 
     def calc_obstacle(self, current_path, robot_state):
-        select_obstacle_state = Dynamic_Windou_Approach.select_obstacle(self, robot_state)
         min_dist = float("inf")
-        max_dist = -float("inf")
 
-        for i in range(len(current_path[0][0])-1):
-            # print(len(current_path[0][0]))
-            for j in range(len(select_obstacle_state)):
-                # print(current_path[0][i][0])
-                temp_dist_to_obstacle = math.sqrt(math.hypot(current_path[0][i][0] - select_obstacle_state[j][0], current_path[1][i][0] - select_obstacle_state[j][1]))
+        for i in range(len(current_path[0])):
+            for j in range(len(self.obstacle_state)):
+                temp_dist_to_obstacle = math.hypot(current_path[0][i] - self.obstacle_state[j][0], current_path[1][i] - self.obstacle_state[j][1])
 
                 if temp_dist_to_obstacle < self.config.robot_radius:
                     return float("inf")
@@ -165,17 +142,23 @@ class Dynamic_Windou_Approach():
                 if temp_dist_to_obstacle <= min_dist:
                     min_dist = temp_dist_to_obstacle
 
-                if temp_dist_to_obstacle >= max_dist:
-                    max_dist = temp_dist_to_obstacle
+        return min_dist
 
-        cost = min_dist / max_dist
+    def calc_velocity(self, velocity):
+        distance_robot = math.hypot(self.all_robot_state[0][0] - self.all_robot_state[1][0], self.all_robot_state[0][1] - self.all_robot_state[1][1])
+        distance_cost = self.config.robot_distance_cost - distance_robot # 離れると-
+
+        speed_cost = self.config.max_speed - velocity # 速いと小さくなる
+
+        if distance_cost <= 0.0:
+            cost = -speed_cost
+        else:
+            cost = speed_cost
+
         return cost
 
-    # def calc_velocity(self):
-
-
     def calc_velocity_last(self, velocity):
-        cost = (self.config.max_speed - velocity) / self.config.max_speed
+        cost = self.config.max_speed - velocity
         return cost
 
     def new_robot_state(self, current_robot_state, vel, yawrate):
@@ -187,27 +170,52 @@ class Dynamic_Windou_Approach():
 
         return current_robot_state
 
+    def min_max_normalize(self, data):
+        data = np.array(data)
+
+        max_data = max(data)
+        min_data = min(data)
+
+        if max_data - min_data == 0.0:
+            data = [0.0 for i in range(len(data))]
+        else:
+            data = (data - min_data) / ((max_data - min_data) + 0.00001)
+
+        return data
+
     def dwa_control(self):
         publish_best_path = []
         publish_robot_state = []
+        min_dwa_cost = float("inf")
 
         for i in range(robot_number):
             current_goal = Dynamic_Windou_Approach.individual_goal(self, i)
             current_path = Dynamic_Windou_Approach.individual_path(self, i)
-            print(len(current_path))
             current_robot_state = Dynamic_Windou_Approach.individual_robot_state(self, i)
 
             if self.flag_path[i] == False:
                 publish_best_path.append(current_path)
                 publish_robot_state.append(current_robot_state)
+
             else:
+                heading = []
+                obstacle = []
+                velocity = []
+
                 if i == robot_number - 1:  # 最後尾のロボット
                     for j in range(len(current_path)):
-                        heading = Dynamic_Windou_Approach.calc_heading(self, current_goal, current_path[j])
-                        obstacle = Dynamic_Windou_Approach.calc_obstacle(self, current_path[j], current_robot_state)
-                        velocity = Dynamic_Windou_Approach.calc_velocity_last(self, current_path[j][3])
+                        heading.append(Dynamic_Windou_Approach.calc_heading(self, current_goal, current_path[j]))
+                        obstacle.append(Dynamic_Windou_Approach.calc_obstacle(self, current_path[j], current_robot_state))
+                        velocity.append(Dynamic_Windou_Approach.calc_velocity_last(self, current_path[j][3]))
 
-                        dwa_cost = heading + obstacle + velocity
+                    heading = Dynamic_Windou_Approach.min_max_normalize(self, heading)
+                    obstacle = Dynamic_Windou_Approach.min_max_normalize(self, obstacle)
+                    velocity = Dynamic_Windou_Approach.min_max_normalize(self, velocity)
+
+                    min_dwa_cost = 10.0
+
+                    for j in range(len(current_path)):
+                        dwa_cost = self.config.heading_weight * heading[j] + self.config.obstacle_weight * obstacle[j] + self.config.velocity_weight * velocity[j]
 
                         if min_dwa_cost >= dwa_cost:
                             min_dwa_cost = dwa_cost
@@ -219,20 +227,33 @@ class Dynamic_Windou_Approach():
 
                 else:
                     for j in range(len(current_path)):
-                        heading = Dynamic_Windou_Approach.calc_heading(self, current_goal, current_path[j])
-                        obstacle = Dynamic_Windou_Approach.calc_obstacle(self, current_path, current_robot_state)
-                        velocity = Dynamic_Windou_Approach.calc_velocity_last(self, current_path[j][3])
-                        # velocity = Dynamic_Windou_Approach().calc_velocity(self, )
+                        heading.append(Dynamic_Windou_Approach.calc_heading(self, current_goal, current_path[j]))
+                        obstacle.append(Dynamic_Windou_Approach.calc_obstacle(self, current_path[j], current_robot_state))
+                        velocity.append(Dynamic_Windou_Approach.calc_velocity(self, current_path[j][3]))
 
-                        dwa_cost = heading + obstacle + velocity
+                    heading = Dynamic_Windou_Approach.min_max_normalize(self, heading)
+                    obstacle = Dynamic_Windou_Approach.min_max_normalize(self, obstacle)
+                    velocity = Dynamic_Windou_Approach.min_max_normalize(self, velocity)
+                    # print(velocity)
+
+                    min_dwa_cost = 10.0
+
+                    for j in range(len(current_path)):
+                        dwa_cost = self.config.heading_weight * heading[j] + self.config.obstacle_weight * obstacle[j] + self.config.velocity_weight * velocity[j]
+                        # print(current_path[j][3])
 
                         if min_dwa_cost >= dwa_cost:
                             min_dwa_cost = dwa_cost
                             best_path = current_path[j]
 
+                    # print(best_path[3])
+                        print("yes_norm: ", heading[j], obstacle[j], velocity[j])
+
                     new_state = Dynamic_Windou_Approach.new_robot_state(self, current_robot_state, best_path[3], best_path[4])
                     publish_best_path.append(best_path)
                     publish_robot_state.append(new_state)
+
+            min_dwa_cost = float("inf")
 
         return publish_best_path, publish_robot_state
 
@@ -243,6 +264,7 @@ class Plot():
         self.all_robot_state = all_robot_state
         self.obstacle_state = obstacle_state
         self.flag_path = flag_path
+        self.config = Config()
 
     def individual_goal(self, current_number):
         goal = []
@@ -271,10 +293,19 @@ class Plot():
             current_robot_state = Dynamic_Windou_Approach.individual_robot_state(self, i)
 
             plt.plot(current_robot_state[0], current_robot_state[1], "or")
-            plt.plot(goal[0], goal[1], "xb")
+            plt.plot(current_goal[0], current_goal[1], "xb")
 
             if self.flag_path[i] == True:
                 plt.plot(current_path[0], current_path[1], "-r")
+
+        distance = math.hypot(self.all_robot_state[0][0] - self.all_robot_state[1][0], self.all_robot_state[0][1] - self.all_robot_state[1][1])
+        # print(distance)
+
+        if distance <= self.config.robot_distance_cost:
+            plt.plot([self.all_robot_state[0][0], self.all_robot_state[1][0]], [self.all_robot_state[0][1], self.all_robot_state[1][1]], "g")
+        else:
+            plt.plot([self.all_robot_state[0][0], self.all_robot_state[1][0]], [self.all_robot_state[0][1], self.all_robot_state[1][1]], "k")
+            print("dis!")
 
         plt.axis("equal")
         plt.grid(True)
@@ -284,11 +315,12 @@ def main():
     print(__file__ + " start!!")
 
     robot_state = [[0.0, 0.0, 0.0, 0.0, 0.0],
-                   [-5.0, 0.0, 0.0, 0.0, 0.0]]
+                   [-5.0, -5.0, 0.0, 0.0, 0.0]]
 
-    obstacle_state = [[5, 5], [5, 7], [5, 9]]
+    # obstacle_state = [[0, 10], [20, 0]]
+    obstacle_state = [[10, 10], [13, 15], [16, 9]]
 
-    goal = [[10, 10], [10, 10]]
+    goal = [[20, 20], [20, 20]]
 
     traj1 = np.array(robot_state[0])
     traj2 = np.array(robot_state[1])
@@ -298,8 +330,8 @@ def main():
     config = Config()
 
     for i in range(1000):
-        robot1_check = math.sqrt(math.hypot(robot_state[0][0] - goal[0][0], robot_state[0][1] - goal[0][1]))
-        robot2_check = math.sqrt(math.hypot(robot_state[1][0] - goal[1][0], robot_state[1][1] - goal[1][1]))
+        robot1_check = math.hypot(robot_state[0][0] - goal[0][0], robot_state[0][1] - goal[0][1])
+        robot2_check = math.hypot(robot_state[1][0] - goal[1][0], robot_state[1][1] - goal[1][1])
 
         if robot1_check <= config.robot_radius:
             flag_path[0] = False
@@ -312,20 +344,18 @@ def main():
             flag_path[1] = True
 
         pp1 = Predict_path(robot_state[0])
-        dw1 = pp1.calc_dynamic_window()
-        path1 = pp1.get_predict_path(dw1)
+        path1 = pp1.get_predict_path()
 
         pp2 = Predict_path(robot_state[1])
-        dw2 = pp2.calc_dynamic_window()
-        path2 = pp2.get_predict_path(dw2)
+        path2 = pp2.get_predict_path()
 
         path = [path1, path2]
 
         dwa = Dynamic_Windou_Approach(goal, path, robot_state, obstacle_state, flag_path)
         best_path, robot_state = dwa.dwa_control()
 
-        plt = Plot(goal, best_path, robot_state, obstacle_state, flag_path)
-        plt.plot_do()
+        plot = Plot(goal, best_path, robot_state, obstacle_state, flag_path)
+        plot.plot_do()
 
         traj1 = np.vstack((traj1, robot_state[0]))
         traj2 = np.vstack((traj2, robot_state[1]))
@@ -334,7 +364,7 @@ def main():
             print("Goal!!")
             break
 
-        goal = [[10, 10], [robot_state[0], robot_state[1]]]
+        goal = [[20, 20], [robot_state[0][0] - 0.5, robot_state[0][1] - 0.5]]
 
     plt.plot(traj1[:, 0], traj1[:, 1], "-r")
     plt.plot(traj2[:, 0], traj2[:, 1], "-r")
