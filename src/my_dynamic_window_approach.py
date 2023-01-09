@@ -30,11 +30,11 @@ class Config():
         self.max_accel    = 1.0  # [m/ss]
         self.max_dyawrate = 180.0 * math.pi / 180.0  # [rad/ss]
         self.vel_reso     = 0.02  # [m/s]
-        self.yawrate_reso = math.pi / 180.0  # [rad/s]
+        self.yawrate_reso = 4*math.pi / 180.0  # [rad/s]
         self.dt           = 0.1  # [s]
         self.predict_time = 2.0  # [s]
-        self.heading_weight = 1.0
-        self.obstacle_weight = 0.03
+        self.heading_weight = 0.5
+        self.obstacle_weight = 0.3
         self.velocity_weight = 0.5
         self.robot_distance_cost = 5.0
         self.robot_radius = 0.5  # [m]
@@ -85,7 +85,7 @@ class Predict_path():
 
     def get_predict_path(self):
         dw = Predict_path.calc_dynamic_window(self)
-        print(dw)
+        # print(dw)
         publish_path = []
 
         for vel in np.arange(dw[0], dw[1], self.config.vel_reso):
@@ -225,7 +225,7 @@ class Dynamic_Windou_Approach():
 
                     heading = Dynamic_Windou_Approach.min_max_normalize(self, heading)
                     # obstacle = Dynamic_Windou_Approach.min_max_normalize(self, obstacle)
-                    # velocity = Dynamic_Windou_Approach.min_max_normalize(self, velocity)
+                    velocity = Dynamic_Windou_Approach.min_max_normalize(self, velocity)
                     # print(velocity)
 
                     min_dwa_cost = float("inf")
@@ -250,12 +250,13 @@ class Dynamic_Windou_Approach():
                     # print(velocity)
                     heading = Dynamic_Windou_Approach.min_max_normalize(self, heading)
                     # obstacle = Dynamic_Windou_Approach.min_max_normalize(self, obstacle)
-                    # velocity = Dynamic_Windou_Approach.min_max_normalize(self, velocity)
+                    velocity = Dynamic_Windou_Approach.min_max_normalize(self, velocity)
                     # if i == 0:
+                        # print(len(heading))
                         # print(len(obstacle))
                         # print(heading)
                         # print(obstacle)
-                    # print(velocity)
+                        # print(velocity)
 
                     min_dwa_cost = float("inf")
 
