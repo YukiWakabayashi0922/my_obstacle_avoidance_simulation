@@ -19,28 +19,26 @@ show_animation = True   # show trajectory
 
 # robot_number = 2        # simulation robot number
 robot_number = 3        # simulation robot number
+obstacle_number = 20
 
 # robot parameter
 class Config():
     def __init__(self):
-        self.max_speed    = 1.0  # [m/s]
-        self.min_speed    = -0.5  # [m/s]
-        self.max_yawrate  =  180.0 * math.pi / 180.0  # [rad/s]
-        self.min_yawrate  = -180.0 * math.pi / 180.0  # [rad/s]
-        self.max_accel    = 1.0  # [m/ss]
+        self.max_speed    = 0.5  # [m/s]
+        self.min_speed    = 0.0  # [m/s]
+        self.max_yawrate  =  60.0 * math.pi / 180.0  # [rad/s]
+        self.min_yawrate  = -60.0 * math.pi / 180.0  # [rad/s]
+        self.max_accel    = 0.5  # [m/ss]
         self.max_dyawrate = 180.0 * math.pi / 180.0  # [rad/ss]
         self.vel_reso     = 0.02  # [m/s]
-        self.yawrate_reso = 4*math.pi / 180.0  # [rad/s]
+        self.yawrate_reso = 2*math.pi / 180.0  # [rad/s]
         self.dt           = 0.1  # [s]
         self.predict_time = 2.0  # [s]
         self.heading_weight = 0.5
-        self.obstacle_weight = 0.3
-        self.velocity_weight = 0.5
-        self.robot_distance_cost = 5.0
-        self.robot_radius = 0.5  # [m]
-        # self.obstacle_update_x = 0.1  # [m/ss]
-        # self.obstacle_update_y = 0.1  # [m/ss]
-
+        self.obstacle_weight = 0.2
+        self.velocity_weight = 0.4
+        self.robot_distance_cost = 2.5
+        self.robot_radius = 0.3  # [m]
 
 # ロボットの予測軌跡を算出するクラス
 class Predict_path():
@@ -54,8 +52,8 @@ class Predict_path():
               self.state[3] + self.config.max_accel * self.config.dt,
               self.state[4] - self.config.max_dyawrate * self.config.dt,
               self.state[4] + self.config.max_dyawrate * self.config.dt]
-        dw = [max(Vs[0], Vd[0]), min(Vs[1], Vd[1]), max(Vs[2], Vd[2]), min(Vs[3], Vd[3])]
 
+        dw = [max(Vs[0], Vd[0]), min(Vs[1], Vd[1]), max(Vs[2], Vd[2]), min(Vs[3], Vd[3])]
         return dw
 
     def calc_path(self, current_state, vel, yawrate):
@@ -245,7 +243,8 @@ class Dynamic_Windou_Approach():
                     for j in range(len(current_path)):
                         heading.append(Dynamic_Windou_Approach.calc_heading(self, current_goal, current_path[j]))
                         obstacle.append(Dynamic_Windou_Approach.calc_obstacle(self, current_path[j], current_robot_state))
-                        velocity.append(Dynamic_Windou_Approach.calc_velocity(self, current_path[j][3], i))
+                        # velocity.append(Dynamic_Windou_Approach.calc_velocity(self, current_path[j][3], i))
+                        velocity.append(Dynamic_Windou_Approach.calc_velocity_last(self, current_path[j][3]))
 
                     # print(velocity)
                     heading = Dynamic_Windou_Approach.min_max_normalize(self, heading)
@@ -278,15 +277,13 @@ class Dynamic_Windou_Approach():
         return publish_best_path, publish_robot_state
 
 class Plot():
-    # def __init__(self, all_goal, all_path, all_robot_state, obstacle_state, flag_path):
-    def __init__(self, all_goal, all_path, all_robot_state, obstacle_state, flag_path, path):
+    def __init__(self, all_goal, all_path, all_robot_state, obstacle_state, flag_path):
         self.all_goal = all_goal
         self.all_path = all_path
         self.all_robot_state = all_robot_state
         self.obstacle_state = obstacle_state
         self.flag_path = flag_path
         self.config = Config()
-        self.path = path
 
     def individual_goal(self, current_number):
         goal = []
@@ -303,11 +300,6 @@ class Plot():
         robot_state = self.all_robot_state[current_number]
         return robot_state
 
-    # def individual_pathget(self, current_number):
-        # pathget = []
-        # pathget = self.path[current_number]
-        # return pathget
-
     def plot_do(self):
         plt.cla()
 
@@ -318,16 +310,12 @@ class Plot():
             current_goal = Plot.individual_goal(self, i)
             current_path = Plot.individual_path(self, i)
             current_robot_state = Plot.individual_robot_state(self, i)
-            # current_pathget = Plot.individual_pathget(self, i)
 
-            plt.plot(current_robot_state[0], current_robot_state[1], "or")
+            plt.plot(current_robot_state[0], current_robot_state[1], "og")
             plt.plot(current_goal[0], current_goal[1], "xb")
 
-            # for j in range(len(current_pathget)):
-                # plt.plot(current_pathget[j][0], current_pathget[j][1], "-g")
-
             if self.flag_path[i] == True:
-                plt.plot(current_path[0], current_path[1], "-r")
+                plt.plot(current_path[0], current_path[1], "-m")
 
         distance12 = math.hypot(self.all_robot_state[0][0] - self.all_robot_state[1][0], self.all_robot_state[0][1] - self.all_robot_state[1][1])
         distance23 = math.hypot(self.all_robot_state[1][0] - self.all_robot_state[2][0], self.all_robot_state[1][1] - self.all_robot_state[2][1])
@@ -336,34 +324,74 @@ class Plot():
         if distance12 <= self.config.robot_distance_cost:
             plt.plot([self.all_robot_state[0][0], self.all_robot_state[1][0]], [self.all_robot_state[0][1], self.all_robot_state[1][1]], "g")
         else:
-            plt.plot([self.all_robot_state[0][0], self.all_robot_state[1][0]], [self.all_robot_state[0][1], self.all_robot_state[1][1]], "k")
-            print("dis12!")
+            plt.plot([self.all_robot_state[0][0], self.all_robot_state[1][0]], [self.all_robot_state[0][1], self.all_robot_state[1][1]], "r")
+            # print("dis12!")
 
         if distance23 <= self.config.robot_distance_cost:
             plt.plot([self.all_robot_state[1][0], self.all_robot_state[2][0]], [self.all_robot_state[1][1], self.all_robot_state[2][1]], "g")
         else:
-            plt.plot([self.all_robot_state[1][0], self.all_robot_state[2][0]], [self.all_robot_state[1][1], self.all_robot_state[2][1]], "k")
+            plt.plot([self.all_robot_state[1][0], self.all_robot_state[2][0]], [self.all_robot_state[1][1], self.all_robot_state[2][1]], "r")
 
         plt.axis("equal")
         plt.grid(True)
         plt.pause(0.0001)
 
-def obstacle_update(obstacle_state):
+class Obstacle_update():
+    def __init__(self, all_obstacle_state, all_obstacle_velocity):
+        self.all_obstacle_state = all_obstacle_state
+        self.all_obstacle_velocity = all_obstacle_velocity
+
+    def individual_obstacle_state(self, current_number):
+        obstacle_state = []
+        obstacle_state = self.all_obstacle_state[current_number]
+        return obstacle_state
+
+    def individual_obstacle_velocity(self, current_number):
+        obstacle_velocity = []
+        obstacle_velocity = self.all_obstacle_velocity[current_number]
+        return obstacle_velocity
+
+    def calc_new_state(self):
+        publish_obstacle_state = []
+
+        for i in range(len(self.all_obstacle_state)):
+            current_obstacle_state = Obstacle_update.individual_obstacle_state(self, i)
+            current_obstacle_velocity = Obstacle_update.individual_obstacle_velocity(self, i)
+
+            new_state = [current_obstacle_state[0] + current_obstacle_velocity[0], current_obstacle_state[1] + current_obstacle_velocity[1]]
+            publish_obstacle_state.append(new_state)
+
+        return publish_obstacle_state
+
+def get_obstacle_state():
     publish_obstacle_state = []
-    for i in range(len(obstacle_state)):
-        new_state = [obstacle_state[i][0] - 0.02, obstacle_state[i][1]]
-        publish_obstacle_state.append(new_state)
+
+    for i in range(obstacle_number):
+        obstacle_state = [random.randrange(3, 15, 1), random.randrange(8, 12, 1)]
+        publish_obstacle_state.append(obstacle_state)
 
     return publish_obstacle_state
+
+def get_obstacle_velocity():
+    publish_obstacle_velocity = []
+
+    for i in range(obstacle_number):
+        obstacle_velocity = [random.randrange(-2, 2, 1) / 100, random.randrange(-2, 2, 1) / 100]
+        publish_obstacle_velocity.append(obstacle_velocity)
+
+    return publish_obstacle_velocity
 
 def main():
     print(__file__ + " start!!")
 
     robot_state = [[0.0, 10.0, 0.0, 0.0, 0.0],
-                   [-5.0, 10.0, 0.0, 0.0, 0.0],
-                   [-13.0, 10.0, 0.0, 0.0, 0.0]]
+                   [-2.5, 10.0, 0.0, 0.0, 0.0],
+                   [-5.0, 10.0, 0.0, 0.0, 0.0]]
 
-    obstacle_state = [[20, 10], [23, 15], [26, 9]]
+    obstacle_state = [[7, 8], [8, 9], [9, 11], [9, 9], [10, 12], [11, 8], [12, 9], [12, 13]]
+    obstacle_velocity = [[-0.01, 0.01], [-0.01, 0.01], [-0.01, 0.0], [-0.01, 0.0], [-0.01, -0.01], [-0.01, 0.01], [-0.01, 0.0], [-0.01, -0.01]]
+    # obstacle_state = get_obstacle_state()
+    # obstacle_velocity = get_obstacle_velocity()
 
     goal = [[20, 12], [20, 12], [20, 12]]
 
@@ -371,11 +399,20 @@ def main():
     traj2 = np.array(robot_state[1])
     traj3 = np.array(robot_state[2])
 
+    dist_12 = np.array([])
+    dist_23 = np.array([])
+    dist_13 = np.array([])
+    t = np.array([])
+
     flag_path = [True, True, True]
 
     config = Config()
 
     for i in range(1000):
+        distance_12 = math.hypot(robot_state[0][0] - robot_state[1][0], robot_state[0][1] - robot_state[1][1])
+        distance_23 = math.hypot(robot_state[1][0] - robot_state[2][0], robot_state[1][1] - robot_state[2][1])
+        distance_13 = math.hypot(robot_state[0][0] - robot_state[2][0], robot_state[0][1] - robot_state[2][1])
+
         robot1_check = math.hypot(robot_state[0][0] - goal[0][0], robot_state[0][1] - goal[0][1])
         robot2_check = math.hypot(robot_state[1][0] - goal[1][0], robot_state[1][1] - goal[1][1])
         robot3_check = math.hypot(robot_state[2][0] - goal[2][0], robot_state[2][1] - goal[2][1])
@@ -408,30 +445,59 @@ def main():
 
         dwa = Dynamic_Windou_Approach(goal, path, robot_state, obstacle_state, flag_path)
         best_path, robot_state = dwa.dwa_control()
-        # print(best_path[0][3], best_path[1][3], best_path[2][3])
+        print("1:", robot_state[0][3], " 2:", robot_state[1][3], " 3:", robot_state[2][3])
 
-        # plot = Plot(goal, best_path, robot_state, obstacle_state, flag_path)
-        plot = Plot(goal, best_path, robot_state, obstacle_state, flag_path, path)
+        plot = Plot(goal, best_path, robot_state, obstacle_state, flag_path)
         plot.plot_do()
 
         traj1 = np.vstack((traj1, robot_state[0]))
         traj2 = np.vstack((traj2, robot_state[1]))
         traj3 = np.vstack((traj3, robot_state[2]))
 
+        dist_12 = np.append(dist_12, distance_12)
+        dist_23 = np.append(dist_23, distance_23)
+        dist_13 = np.append(dist_13, distance_13)
+        t = np.append(t, i)
+
         # if flag_path[0] == False and flag_path[1] == False:
         if flag_path[0] == False and flag_path[1] == False and flag_path[2] == False:
             print("Goal!!")
             break
 
-        goal = [[20, 10], [robot_state[0][0] - 1.0, robot_state[0][1]], [robot_state[1][0] - 1.0, robot_state[1][1]]]
-        obstacle_state = obstacle_update(obstacle_state)
+        goal = [[20, 10], [robot_state[0][0] - 0.5, robot_state[0][1]], [robot_state[1][0] - 0.5, robot_state[1][1]]]
+        ob_update = Obstacle_update(obstacle_state, obstacle_velocity)
+        obstacle_state = ob_update.calc_new_state()
 
     plt.plot(traj1[:, 0], traj1[:, 1], "-r")
     plt.plot(traj2[:, 0], traj2[:, 1], "-r")
     plt.plot(traj3[:, 0], traj3[:, 1], "-r")
     plt.pause(0.0001)
 
+    plt.subplots()
+    for i in range(len(t)):
+        plt.plot(t[i:i+2], dist_12[i:i+2], color="red" if dist_12[i] >= config.robot_distance_cost else "blue")
+    plt.hlines(config.robot_distance_cost, 0, t[-1], "k")
+    plt.grid(True)
+    plt.xlabel("Time [s]")
+    plt.ylabel("Distance [m]")
+
+    plt.subplots()
+    for i in range(len(t)):
+        plt.plot(t[i:i+2], dist_23[i:i+2], color="red" if dist_23[i] >= config.robot_distance_cost else "blue")
+    plt.hlines(config.robot_distance_cost, 0, t[-1], "k")
+    plt.grid(True)
+    plt.xlabel("Time [s]")
+    plt.ylabel("Distance [m]")
+
+    plt.subplots()
+    for i in range(len(t)):
+        plt.plot(t[i:i+2], dist_13[i:i+2], color="red" if dist_13[i] >= 2*config.robot_distance_cost else "blue")
+    plt.hlines(2*config.robot_distance_cost, 0, t[-1], "k")
+    plt.grid(True)
+    plt.xlabel("Time [s]")
+    plt.ylabel("Distance [m]")
     plt.show()
+
 
 if __name__ == "__main__":
     main()
